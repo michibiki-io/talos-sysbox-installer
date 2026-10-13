@@ -131,6 +131,10 @@ export DOCKER_HOST=unix:///run/docker.sock
 kind create cluster --name sysbox-validation --image {self.lock['test_images']['kind_node']} --kubeconfig "$KUBECONFIG" --wait 180s
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 echo SYSBOX_KIND_READY
+# Preload the digest-verified outer image to avoid a second registry lookup.
+# The smoke test still exercises Kubernetes Service DNS and TCP below.
+docker tag {self.lock['test_images']['busybox']} sysbox-smoke:locked
+kind load docker-image sysbox-smoke:locked --name sysbox-validation
 mkdir -p /workspace/chart/templates
 printf 'apiVersion: v2\nname: smoke\nversion: 0.1.0\n' > /workspace/chart/Chart.yaml
 cat > /workspace/chart/templates/resources.yaml <<'YAML'
@@ -148,7 +152,8 @@ spec:
     spec:
       containers:
         - name: http
-          image: {self.lock['test_images']['busybox']}
+          image: sysbox-smoke:locked
+          imagePullPolicy: Never
           command: [sh, -ceu, 'mkdir -p /www; echo sysbox-ready > /www/index.html; exec httpd -f -p 8080 -h /www']
 ---
 apiVersion: v1
