@@ -87,9 +87,9 @@ python3 scripts/runtime_patch.py --input-fragment existing.part --no-existing-ma
 python3 scripts/runtime_patch.py --input-fragment existing.part --existing-machine-files machine-files.json --output runtime.patch.json
 ```
 
-The existing-entry mode tests the complete supplied `machine.files` array and replaces its one matching entry in place using JSON6902, preserving its permissions and other entries. It refuses missing or duplicate matches.
+The existing-entry mode uses Talos strategic `$patch: delete` to select only this file path, then adds its replacement within the same patch/application. It preserves permissions and other entries, and refuses missing or duplicate matches in the supplied list. The target entry moves to the end of the list. This works with both single- and multi-document machine configurations; Talos rejects JSON6902 for multi-document input.
 Keep the exported array and generated patch private: other file entries may contain secrets. Patch output is mode 0600.
-Use `talosctl patch machineconfig --patch @runtime.patch.json` with explicit connection flags; test failures require a fresh export, not removal of the test operation.
+Use `talosctl patch machineconfig --patch @runtime.patch.json` with explicit connection flags; selector failures require a fresh export and reconciliation, not removal of the delete selector. Recheck the current entry immediately before applying; strategic selectors do not provide a content/resource-version compare-and-swap.
 Check the handler after both initial boot and an authorized reboot.
 Review the full output before applying it with an explicit Talos config, endpoint and node.
 Do not apply a patch made from an empty fragment to an existing node.
@@ -258,9 +258,9 @@ VMware agent は VMware 以外で失敗して再起動するため、VMware 版�
 
 runtime 登録には `/etc/cri/conf.d/20-customization.part` を使用します。
 同じ `machine.files` entry がないことを確認した場合は `--no-existing-machine-file` を指定します。既存 entry がある場合は、現在の配列全体を非公開 JSON に保存して `--existing-machine-files FILE` に渡します。
-既存 entry 用の JSON6902 patch は配列全体を test してから1件だけ置換し、permissions と他の entry を保持します。対象の不足・重複を拒否します。
+既存 entry は Talos の strategic `$patch: delete` で対象パスだけを選択し、同じ patch/apply 内で置き換える entry を追加します。permissions と他の entry を保持し、入力中の対象の不足・重複を拒否します。対象 entry は配列の末尾へ移ります。単一・複数 document の両方に対応し、Talos が複数 document で拒否する JSON6902 を使いません。
 配列と patch は秘密情報を含む可能性があるため公開しません。出力の permission は 0600 です。
-接続先を明示した `talosctl patch machineconfig --patch @runtime.patch.json` を使います。test 失敗時は現在の設定を再取得し、test 自体を削除しないでください。初回起動と承認した再起動の両方で handler を確認します。
+接続先を明示した `talosctl patch machineconfig --patch @runtime.patch.json` を使います。selector が失敗したら現在の設定を再取得して照合し、delete selector を削除しないでください。strategic selector は内容や resource version の compare-and-swap を提供しないため、適用直前にも現在の entry と照合します。初回起動と承認した再起動の両方で handler を確認します。
 既存の内容を取得し、同じパスを持つ `machine.files` 設定とも照合してから、英語節の `runtime_patch.py` コマンドで patch を生成します。
 空の入力は新規ノードであることを確認した場合だけ使います。
 既存ノードの fragment を空の入力から作った patch で上書きしないでください。

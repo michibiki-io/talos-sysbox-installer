@@ -4,6 +4,9 @@ import io
 import json
 import tarfile
 import tempfile
+import os
+import subprocess
+import shutil
 import tomllib
 import unittest
 from unittest import mock
@@ -107,6 +110,31 @@ class BuildTests(unittest.TestCase):
             digest = build.docker_to_oci(dst, Path(d)/'oci')
             self.assertEqual(json.loads((Path(d)/'oci/index.json').read_text())['manifests'][0]['digest'], digest)
 
+    @unittest.skipUnless(shutil.which('talosctl') or os.environ.get('TALOSCTL_PATH'), 'requires checksum-locked talosctl')
+    def test_talos_parser_replaces_entry_in_single_and_multi_document_configs(self):
+        binary=os.environ.get('TALOSCTL_PATH') or shutil.which('talosctl')
+        files=[{'path':'/var/other','permissions':420,'op':'create','content':'unchanged'},
+               {'path':'/etc/cri/conf.d/20-customization.part','permissions':384,'op':'create','content':''}]
+        original={'version':'v1alpha1','machine':{'type':'worker','files':files}}
+        extra='---\napiVersion: v1alpha1\nkind: HostnameConfig\nhostname: test-host\n'
+        patch=runtime.machine_file_patch('',files)
+        with tempfile.TemporaryDirectory() as d:
+            config=Path(d)/'config.yaml';patchfile=Path(d)/'patch.json'
+            patchfile.write_text(json.dumps(patch))
+            for suffix in ('',extra):
+                config.write_text(json.dumps(original)+'\n'+suffix)
+                result=subprocess.run([binary,'machineconfig','patch',str(config),'--patch','@'+str(patchfile)],capture_output=True,text=True,check=True)
+                # Use another strategic delete as a semantic assertion: Talos
+                # fails a selector that cannot find its preserved other entry.
+                other={'machine':{'files':[{'path':'/var/other','$patch':'delete'}]}}
+                patched=Path(d)/'patched.yaml';patched.write_text(result.stdout)
+                subprocess.run([binary,'machineconfig','patch',str(patched),'--patch',json.dumps(other)],capture_output=True,text=True,check=True)
+                self.assertEqual(result.stdout.count('path: /etc/cri/conf.d/20-customization.part'),1)
+                self.assertIn('content: unchanged',result.stdout)
+                self.assertIn('sysbox-runc',result.stdout)
+                self.assertIn('permissions: 0o600',result.stdout)
+                if suffix:self.assertIn('kind: HostnameConfig',result.stdout)
+
     def test_runtime_merge_preserves_default_and_other_handlers(self):
         existing = '''[plugins."io.containerd.cri.v1.runtime".containerd]
 default_runtime_name="runc"
@@ -126,12 +154,11 @@ BinaryName="/other"
         files=[{'path':'/var/other','content':'unchanged'},
                {'path':'/etc/cri/conf.d/20-customization.part','content':'','permissions':384}]
         patch=runtime.machine_file_patch('',files)
-        self.assertEqual(patch[0],{'op':'test','path':'/machine/files','value':files})
-        self.assertEqual(patch[1]['op'],'replace')
-        self.assertEqual(patch[1]['path'],'/machine/files/1')
+        self.assertEqual(patch['version'],'v1alpha1')
+        self.assertEqual(patch['machine']['files'][0],{'path':'/etc/cri/conf.d/20-customization.part','$patch':'delete'})
         self.assertEqual(files[0]['content'],'unchanged')
-        self.assertEqual(patch[1]['value']['op'],'create')
-        self.assertEqual(patch[1]['value']['permissions'],384)
+        self.assertEqual(patch['machine']['files'][1]['op'],'create')
+        self.assertEqual(patch['machine']['files'][1]['permissions'],384)
         with self.assertRaises(ValueError):runtime.machine_file_patch('',files+[files[1]])
         with self.assertRaises(ValueError):runtime.machine_file_patch('',files[:1])
 

@@ -42,10 +42,10 @@ def machine_file_patch(existing, machine_files=None):
         raise ValueError('expected exactly one existing customization entry')
     replacement=dict(machine_files[matches[0]])
     replacement.update(content=entry['content'],op='create')
-    # Test the complete supplied list, then replace its one entry in place.
-    # Strategic merge appends file entries and would duplicate the fixed ID.
-    return [{'op':'test','path':'/machine/files','value':machine_files},
-            {'op':'replace','path':'/machine/files/'+str(matches[0]),'value':replacement}]
+    # Talos rejects JSON6902 for multi-document configs. Its strategic delete
+    # selector removes just this path before the normal merge appends the
+    # replacement, within a single patch/apply operation. Other entries stay.
+    return {'version':'v1alpha1','machine':{'files':[{'path':entry['path'],'$patch':'delete'},replacement]}}
 
 
 def main():
