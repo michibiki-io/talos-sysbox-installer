@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Push built release images and verify anonymous registry access."""
 import argparse
+import copy
 import json
 import re
 import subprocess
@@ -29,6 +30,18 @@ def anonymous_digest(image):
     return digest
 
 
+def published_inputs(inputs, extension_ref):
+    """Resolve local composition to the anonymously verified registry digest."""
+    result=copy.deepcopy(inputs)
+    local='oci-layout@'+result['extension']['oci_digest']
+    result['extension']['digestRef']=extension_ref
+    for installer in result['installers']:
+        if installer['extensions'][0]!=local:
+            raise RuntimeError('installer does not reference the built local OCI layout')
+        installer['extensions'][0]=extension_ref
+    return result
+
+
 def main():
     p=argparse.ArgumentParser(); p.add_argument('--images',type=Path,required=True); p.add_argument('--output',type=Path,required=True)
     a=p.parse_args(); inputs=json.loads(a.images.read_text())
@@ -44,7 +57,8 @@ def main():
         # explicitly makes it public. Never claim publication on private access.
         digest=anonymous_digest(image)
         records.append({'image':image,'digestRef':image.split(':')[0]+'@'+digest,'digest':digest,'anonymous_pull':True,'architecture':'amd64'})
-    a.output.write_text(json.dumps({'images':records,'inputs':inputs,'licenses':'See build-metadata.json and /usr/local/share/licenses/talos-sysbox in the extension.','corresponding_source':'sources.tar.gz attached to this release contains the matching upstream and Ubuntu package sources and packaging patches.'},indent=2)+'\n')
+    resolved=published_inputs(inputs,records[0]['digestRef'])
+    a.output.write_text(json.dumps({'images':records,'inputs':resolved,'licenses':'See build-metadata.json and /usr/local/share/licenses/talos-sysbox in the extension.','corresponding_source':'sources.tar.gz attached to this release contains the matching upstream and Ubuntu package sources and packaging patches.'},indent=2)+'\n')
 
 
 if __name__=='__main__': main()

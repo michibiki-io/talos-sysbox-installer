@@ -17,8 +17,24 @@ def load(name):
 
 build = load('build')
 runtime = load('runtime_patch')
+publish = load('publish')
 
 class BuildTests(unittest.TestCase):
+    def test_published_composition_uses_registry_digest(self):
+        local='sha256:'+'a'*64
+        remote='ghcr.io/example/extension@sha256:'+'b'*64
+        inputs={'extension':{'oci_digest':local},'installers':[
+            {'extensions':['oci-layout@'+local,'official@sha256:'+'c'*64]},
+            {'extensions':['oci-layout@'+local,'official@sha256:'+'d'*64]}]}
+        resolved=publish.published_inputs(inputs,remote)
+        self.assertEqual(resolved['extension']['digestRef'],remote)
+        for before,after in zip(inputs['installers'],resolved['installers']):
+            self.assertEqual(after['extensions'][0],remote)
+            self.assertEqual(after['extensions'][1:],before['extensions'][1:])
+            self.assertEqual(before['extensions'][0],'oci-layout@'+local)
+        inputs['installers'][0]['extensions'][0]='unrelated@'+local
+        with self.assertRaises(RuntimeError): publish.published_inputs(inputs,remote)
+
     def test_variants_share_locked_baseline(self):
         lock = json.loads((ROOT/'versions.lock.json').read_text())
         standard = build.composition(lock, 'custom@sha256:'+'a'*64, 'standard')

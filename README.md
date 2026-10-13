@@ -56,6 +56,8 @@ Official extensions are consumed directly by digest from the catalogue for the s
 The custom extension is passed to imager through an OCI layout, avoiding a local insecure registry.
 Both the custom profile and the explicit base installer are pinned.
 Generated archives are retagged before loading so they never overwrite or publish a SideroLabs image name.
+Local composition records label the custom manifest as `oci-layout@sha256:…`.
+Publication replaces that local reference with the anonymously verified GHCR manifest digest; the two digests need not match.
 
 Outputs under `.build/` include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
 To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
@@ -225,6 +227,8 @@ Docker の恒久設定は変更しません。
 公式 extension は対象 Talos の catalogue にある digest を直接使用します。
 自作 extension は OCI layout として imager に渡すため、ローカル insecure registry を必要としません。
 生成した installer archive は読み込む前にこのプロジェクトの名前へ変換します。
+ローカルの構成記録は自作 manifest を `oci-layout@sha256:…` として区別します。
+公開時は匿名取得を確認した GHCR manifest digest に置き換えます。両者の digest は一致するとは限りません。
 
 `.build/` に3つのイメージ、`images.json`、installer ごとの `inputs.json`、`evidence/build-metadata.json`、`sources.tar.gz` を生成します。
 構成変更は lock のコピーで `standard_extensions` と対応する digest を編集し、`--lock FILE` で指定します。

@@ -113,7 +113,9 @@ def main():
     if not a.extension_only:
         for variant in ('standard','vmware'):
             image = a.registry_prefix+'/talos-sysbox-installer-'+variant+':'+tag
-            inputs = composition(lock, extension.split(':')[0]+'@'+digest, variant)
+            # This is the manifest of our local uncompressed OCI layout, not
+            # the compressed manifest later published by docker push.
+            inputs = composition(lock, 'oci-layout@'+digest, variant)
             destination = out / variant
             destination.mkdir(exist_ok=True)
             # Talos supports OCIPath in a custom profile. This avoids insecure
