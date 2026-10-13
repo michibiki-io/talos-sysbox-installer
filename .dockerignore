@@ -5,3 +5,5 @@
 !supervisor/**
 !versions.lock.json
 !LICENSE
+**/__pycache__/**
+**/*.pyc

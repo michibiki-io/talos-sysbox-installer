@@ -23,7 +23,31 @@ publish = load('publish')
 spec=importlib.util.spec_from_file_location('validate_runtime',ROOT/'test/e2e/scripts/validate_runtime.py')
 validation=importlib.util.module_from_spec(spec);spec.loader.exec_module(validation)
 
+spec=importlib.util.spec_from_file_location('official_sources',ROOT/'build/official_sources.py')
+official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
+
 class BuildTests(unittest.TestCase):
+    def test_catalogue_rejects_official_image_not_in_locked_release(self):
+        lock=json.loads((ROOT/'versions.lock.json').read_text())
+        entries='\n'.join(lock['extensions'].values())
+        official.verify_catalogue(lock,entries)
+        lock['extensions']['iscsi-tools']='unrelated@sha256:'+'0'*64
+        with self.assertRaises(RuntimeError):official.verify_catalogue(lock,entries)
+
+    def test_version_tag_collision_prevents_all_pushes(self):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
+        inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]]}
+        with mock.patch.object(publish,'existing_manifest',side_effect=[None,{'config':{'digest':'sha256:old'}}]),mock.patch.object(publish.subprocess,'check_output',return_value='sha256:new'),mock.patch.object(publish.subprocess,'run') as push:
+            with self.assertRaises(RuntimeError):publish.publish_images(inputs)
+            push.assert_not_called()
+
+    def test_original_release_verification_never_rebuilds_or_pushes(self):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
+        inputs={'extension':{'image':images[0],'oci_digest':'sha256:local'},'installers':[{'image':i,'extensions':['oci-layout@sha256:local']} for i in images[1:]],'image_config_digests':{i:'sha256:config' for i in images}}
+        with mock.patch.object(publish,'existing_manifest',return_value={'config':{'digest':'sha256:config'}}),mock.patch.object(publish,'anonymous_digest',return_value='sha256:'+'a'*64),mock.patch.object(publish.subprocess,'run') as push,mock.patch.object(publish.subprocess,'check_output') as inspect:
+            self.assertEqual(len(publish.publish_images(inputs,True)['images']),3)
+            push.assert_not_called();inspect.assert_not_called()
+
     def test_selected_lock_is_archived_and_verified(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/'project';root.mkdir()
@@ -92,5 +116,18 @@ BinaryName="/other"
         self.assertTrue(result['runtimes']['runc']['options']['SystemdCgroup'])
         self.assertFalse(result['runtimes']['sysbox-runc']['options']['SystemdCgroup'])
         with self.assertRaises(ValueError): runtime.merge(runtime.HANDLER)
+
+    def test_existing_machine_file_is_replaced_not_appended(self):
+        files=[{'path':'/var/other','content':'unchanged'},
+               {'path':'/etc/cri/conf.d/20-customization.part','content':'','permissions':384}]
+        patch=runtime.machine_file_patch('',files)
+        self.assertEqual(patch[0],{'op':'test','path':'/machine/files','value':files})
+        self.assertEqual(patch[1]['op'],'replace')
+        self.assertEqual(patch[1]['path'],'/machine/files/1')
+        self.assertEqual(files[0]['content'],'unchanged')
+        self.assertEqual(patch[1]['value']['op'],'create')
+        self.assertEqual(patch[1]['value']['permissions'],384)
+        with self.assertRaises(ValueError):runtime.machine_file_patch('',files+[files[1]])
+        with self.assertRaises(ValueError):runtime.machine_file_patch('',files[:1])
 
 if __name__ == '__main__': unittest.main()

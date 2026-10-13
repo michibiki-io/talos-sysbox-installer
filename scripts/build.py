@@ -76,6 +76,8 @@ def source_archive(out, selected_lock):
         for name in ('supervisor','build','LICENSE'):
             tf.add(ROOT/name, arcname='project/'+name, filter=lambda member: None if '__pycache__' in member.name or member.name.endswith('.pyc') else member)
         tf.add(selected_lock, arcname='project/versions.lock.json')
+        for name in ('build.py','publish.py'):
+            if (ROOT/'scripts'/name).is_file():tf.add(ROOT/'scripts'/name,arcname='project/scripts/'+name)
 
 
 def main():
@@ -106,7 +108,7 @@ def main():
             shutil.copytree(ROOT / name, context / name, ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')
-        common = ['docker','buildx','build','--builder',a.builder,'--network',a.network,'--platform','linux/amd64','--build-arg','GO_IMAGE='+lock['go'],'--build-arg','UBUNTU_IMAGE='+lock['ubuntu'],'--build-arg','APT_SNAPSHOT='+lock['apt_snapshot'],'-f',str(context/'build/Dockerfile')]
+        common = ['docker','buildx','build','--builder',a.builder,'--network',a.network,'--platform','linux/amd64','--build-arg','GO_IMAGE='+lock['go'],'--build-arg','UBUNTU_IMAGE='+lock['ubuntu'],'--build-arg','APT_SNAPSHOT='+lock['apt_snapshot'],'--build-arg','CATALOGUE_IMAGE='+lock['catalogue'],'-f',str(context/'build/Dockerfile')]
         run([*common,'--target','evidence','--output','type=local,dest='+str(out/'evidence'),str(context)])
         run([*common,'--target','extension','--load','-t',extension,str(context)])
     run(['docker','save','-o',str(out/'extension.tar'),extension])
@@ -129,15 +131,16 @@ def main():
             # JSON is a YAML subset accepted by imager.
             profile_path = out / (variant+'.profile.yaml')
             profile_path.write_text(json.dumps(profile))
-            args = ['docker','run','--rm','-i','--user',f'{os.getuid()}:{os.getgid()}','--network',a.network,'-v',str(out)+':/input:ro','-v',str(destination)+':/out',lock['imager'],'-','--base-installer-image',lock['base_installer']]
-            for ref in inputs['extensions'][1:]:
-                args.extend(['--system-extension-image',ref])
+            # For a complete stdin profile, pinned Talos ignores input flags.
+            # Keep the profile as the single authoritative input path.
+            args = ['docker','run','--rm','-i','--user',f'{os.getuid()}:{os.getgid()}','--network',a.network,'-v',str(out)+':/input:ro','-v',str(destination)+':/out',lock['imager'],'-']
             run(args,input=json.dumps(profile).encode())
             retag_archive(destination/'installer-amd64.tar', destination/'image.tar', image)
             run(['docker','load','-i',str(destination/'image.tar')])
             inputs['image'] = image
             (destination/'inputs.json').write_text(json.dumps(inputs,indent=2)+'\n')
             record['installers'].append(inputs)
+    record['image_config_digests']={image:subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip() for image in [extension,*(i['image'] for i in record['installers'])]}
     (out/'images.json').write_text(json.dumps(record,indent=2)+'\n')
 
 

@@ -63,6 +63,8 @@ Outputs under `.build/` include all three loaded images, `images.json`, each ins
 To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
 The VMware agent is reserved for the VMware variant.
 Use the same `--lock FILE` for either runtime validation runner; the selected lock is included as `project/versions.lock.json` in the corresponding-source archive.
+The validation client is deliberately locked to talosctl 1.13.5 while the target OS remains Talos 1.12.6. Its Docker-cluster provisioning/runtime checks and read-only 1.12.6 API preflight have been exercised; upgrade/reboot compatibility must be recorded by real-node validation separately. Changing the client requires repeating those checks.
+CI sends fork PRs to GitHub-hosted runners. A configured `ACTIONS_RUNNER` override for trusted branches must identify a disposable, isolated runner with no production credentials or workloads.
 Any new Talos release requires explicit compatibility validation before changing the manifest constraint.
 
 ### Installation and runtime opt-in
@@ -79,9 +81,16 @@ For a confirmed fresh node, an explicitly empty input file is appropriate.
 Generate a patch offline:
 
 ```sh
-python3 scripts/runtime_patch.py --input-fragment existing.part --output runtime.patch.json
+# After confirming that this path has no machine.files entry:
+python3 scripts/runtime_patch.py --input-fragment existing.part --no-existing-machine-file --output runtime.patch.json
+# When that machine.files entry already exists (export the complete list privately):
+python3 scripts/runtime_patch.py --input-fragment existing.part --existing-machine-files machine-files.json --output runtime.patch.json
 ```
 
+The existing-entry mode tests the complete supplied `machine.files` array and replaces its one matching entry in place using JSON6902, preserving its permissions and other entries. It refuses missing or duplicate matches.
+Keep the exported array and generated patch private: other file entries may contain secrets. Patch output is mode 0600.
+Use `talosctl patch machineconfig --patch @runtime.patch.json` with explicit connection flags; test failures require a fresh export, not removal of the test operation.
+Check the handler after both initial boot and an authorized reboot.
 Review the full output before applying it with an explicit Talos config, endpoint and node.
 Do not apply a patch made from an empty fragment to an existing node.
 The generator appends only the dedicated handler, preserves supplied defaults/custom handlers, and refuses an existing `sysbox-runc` entry.
@@ -186,8 +195,9 @@ This repository does not add authentication settings or buy credentials/credits.
 
 Releases attach image digests, effective inputs, package/source checksums and corresponding sources.
 The extension retains third-party license texts, package copyright files and applicable NOTICE files under `/usr/local/share/licenses/talos-sysbox`.
-`sources.tar.gz` includes upstream source archives and matching Ubuntu source packages with packaging patches; distribute it alongside the binaries and keep it available for the corresponding release.
+`sources.tar.gz` includes matching Sysbox/ctr sources, Talos 1.12.6 and Linux 6.18.18 sources, the official iSCSI/util-linux extensions, the VMware-only guest agent, checksum-verified Go modules, and matching Ubuntu source packages. The pinned SideroLabs Talos/pkgs/extensions/tools/toolchain repositories provide kernel configuration, patches and rebuild recipes. `build/official-sources.lock.json` binds this inventory to the installer and extension digests; changing those pins requires a matching source inventory update. All three images use this common source bundle, with the VMware agent present only in the VMware installer. The pinned catalogue is checked before assembly. ctr is rebuilt from vendored sources with CGO disabled, and its Go build information is recorded. Sources are attached before image publication; distribute it alongside the binaries and keep it available for the corresponding release.
 The project MIT license does not replace Apache-2.0, BSD, GPL or LGPL licenses of bundled software.
+On publication, every preexisting version tag must have the same image configuration digest as the original artifact; a different rebuild fails before any push. Equal existing images are checked without repushing. A completed-release rerun downloads the original `images.json` and verifies anonymous access/digests with `--verify-existing`, without rebuilding. Partial releases stop for explicit recovery of the original artifacts; do not change an existing version tag or replace its source assets.
 LGPL library replacement remains possible by rebuilding the helper rootfs from the supplied source/build inputs.
 
 ### Troubleshooting
@@ -235,6 +245,8 @@ Docker の恒久設定は変更しません。
 構成変更は lock のコピーで `standard_extensions` と対応する digest を編集し、`--lock FILE` で指定します。
 VMware agent は VMware 版だけに含めます。
 runtime 検証 runner にも同じ `--lock FILE` を指定します。対応ソースの archive には、選択した lock を `project/versions.lock.json` として保存します。
+検証 client は talosctl 1.13.5、対象 OS は Talos 1.12.6 に固定しています。Docker クラスタ作成・runtime 検証と 1.12.6 API の読み取り preflight を確認しています。実ノードの更新・再起動の互換確認は別に記録し、client 更新時にこれらを再確認します。
+CI は fork PR を GitHub-hosted runner で実行します。信頼したブランチで `ACTIONS_RUNNER` を指定する場合も、production 資格情報や workload を持たない隔離された使い捨て runner に限ります。
 Talos 互換指定を広げる前に、新しい版で検証してください。
 
 ### 導入とruntimeの選択
@@ -245,6 +257,10 @@ VMware agent は VMware 以外で失敗して再起動するため、VMware 版�
 このリポジトリはクラスタ認証情報や埋め込み設定を提供しません。
 
 runtime 登録には `/etc/cri/conf.d/20-customization.part` を使用します。
+同じ `machine.files` entry がないことを確認した場合は `--no-existing-machine-file` を指定します。既存 entry がある場合は、現在の配列全体を非公開 JSON に保存して `--existing-machine-files FILE` に渡します。
+既存 entry 用の JSON6902 patch は配列全体を test してから1件だけ置換し、permissions と他の entry を保持します。対象の不足・重複を拒否します。
+配列と patch は秘密情報を含む可能性があるため公開しません。出力の permission は 0600 です。
+接続先を明示した `talosctl patch machineconfig --patch @runtime.patch.json` を使います。test 失敗時は現在の設定を再取得し、test 自体を削除しないでください。初回起動と承認した再起動の両方で handler を確認します。
 既存の内容を取得し、同じパスを持つ `machine.files` 設定とも照合してから、英語節の `runtime_patch.py` コマンドで patch を生成します。
 空の入力は新規ノードであることを確認した場合だけ使います。
 既存ノードの fragment を空の入力から作った patch で上書きしないでください。
@@ -334,8 +350,9 @@ PR build は read-only 権限で、公開用資格情報を渡しません。
 
 リリースにはイメージ digest、実際の入力、package/source checksum、対応ソースを添付します。
 extension image の `/usr/local/share/licenses/talos-sysbox` に第三者ライセンス、copyright、該当 NOTICE を保持します。
-`sources.tar.gz` は対応する上流アーカイブと Ubuntu source package と patch を含み、各 binary リリースと一緒に配布して利用可能な状態を維持します。
+`sources.tar.gz` は Sysbox/ctr、Talos 1.12.6、Linux 6.18.18、公式 iSCSI/util-linux extension、VMware 版専用の guest agent、checksum 検証済み Go module、Ubuntu source package を含みます。固定した SideroLabs の Talos/pkgs/extensions/tools/toolchain リポジトリに kernel 設定・patch・再ビルド recipe が含まれます。`build/official-sources.lock.json` で image digest と対応させ、image pin の変更時には source inventory も更新します。3イメージで共通の source bundle を使い、VMware agent の binary は VMware installer のみに含みます。組み立て前に固定 catalogue と照合します。ctr は vendor source から CGO 無効で再ビルドし、Go build 情報を記録します。binary 公開前に source asset を添付し、各 binary リリースと一緒に配布して利用可能な状態を維持します。
 リポジトリの MIT は同梱物の Apache-2.0、BSD、GPL、LGPL を置き換えません。
+既存の version tag は元の成果物と image configuration digest が一致する必要があります。異なる再ビルド結果は push 前に拒否し、一致する既存イメージは再 push せず検査します。完了済みリリースの再実行は元の `images.json` を取得し、`--verify-existing` で匿名取得と digest を再検証するため、再ビルドしません。途中失敗では元の成果物を使った明示的な復旧まで停止し、既存 tag や source asset を置き換えません。
 提供した source と build input から helper rootfs を再構築し、LGPL ライブラリを交換できます。
 
 ### 障害調査

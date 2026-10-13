@@ -232,4 +232,10 @@ def main():
     Runner(a).run()
 
 
-if __name__=='__main__': main()
+if __name__=='__main__':
+    try: main()
+    except Exception as error:
+        # Exceptions such as TimeoutExpired include the full private argv.
+        # Raw details belong only to the private per-command diagnostics.
+        print('Runtime validation failed ('+type(error).__name__+'); inspect the sanitized result and private diagnostics.')
+        raise SystemExit(1)

@@ -9,10 +9,6 @@
     "url": "https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb",
     "sha256": "9d6d5484f980d0a17f86c492c1262015c2afb66280bdb97215b79fde6a0261c5"
   },
-  "containerd_package": {
-    "url": "https://github.com/containerd/containerd/releases/download/v2.1.6/containerd-static-2.1.6-linux-amd64.tar.gz",
-    "sha256": "577900a5a8684c27e344aeeb1fc64e355745f58cba7f83c53649235ba25abbbf"
-  },
   "sources": {
     "sysbox": {
       "url": "https://github.com/nestybox/sysbox/archive/refs/tags/v0.7.1.tar.gz",

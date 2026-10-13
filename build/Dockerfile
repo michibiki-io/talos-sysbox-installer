@@ -1,6 +1,8 @@
 # Build arguments are supplied exclusively from versions.lock.json by build.py.
 ARG GO_IMAGE
 ARG UBUNTU_IMAGE
+ARG CATALOGUE_IMAGE
+FROM ${CATALOGUE_IMAGE} AS catalogue
 FROM ${GO_IMAGE} AS supervisor
 WORKDIR /src
 COPY supervisor/ ./
@@ -17,8 +19,9 @@ RUN SNAPSHOT="$APT_SNAPSHOT" && test -n "$SNAPSHOT" && \
     rm -f /etc/apt/sources.list.d/* && \
     printf 'deb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\n' "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list && \
     apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends ca-certificates python3 rsync kmod iptables fuse3 dpkg-dev gcc libc6-dev libseccomp-dev pkg-config protobuf-compiler libprotobuf-dev
+COPY --from=catalogue /image-digests /work/catalogue-image-digests
 COPY versions.lock.json /work/versions.lock.json
-COPY build/assemble.py /work/assemble.py
+COPY build/assemble.py build/official_sources.py /work/
 COPY LICENSE /work/LICENSE
 COPY --from=supervisor /usr/local/go/LICENSE /work/GO-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /work/GO-PATENTS
@@ -29,7 +32,7 @@ COPY versions.lock.json /work/project/versions.lock.json
 COPY LICENSE /work/project/LICENSE
 ARG GENERATE_MODULE_LOCKS=0
 ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
-RUN python3 /work/assemble.py
+RUN --mount=type=cache,target=/source-cache --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build python3 /work/assemble.py
 
 FROM scratch AS evidence
 COPY --from=assemble /out/ /

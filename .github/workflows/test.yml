@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -23,7 +23,7 @@ jobs:
           import json, os
           lock=json.load(open('versions.lock.json'))
           with open(os.environ['GITHUB_ENV'],'a') as f:
-            f.write('GO_IMAGE='+lock['go']+'\nUBUNTU_IMAGE='+lock['ubuntu']+'\nAPT_SNAPSHOT='+lock['apt_snapshot']+'\n')
+            f.write('GO_IMAGE='+lock['go']+'\nUBUNTU_IMAGE='+lock['ubuntu']+'\nAPT_SNAPSHOT='+lock['apt_snapshot']+'\nCATALOGUE_IMAGE='+lock['catalogue']+'\n')
           PY
       - name: Cached amd64 build
         uses: docker/build-push-action@v7
@@ -38,6 +38,7 @@ jobs:
             GO_IMAGE=${{ env.GO_IMAGE }}
             UBUNTU_IMAGE=${{ env.UBUNTU_IMAGE }}
             APT_SNAPSHOT=${{ env.APT_SNAPSHOT }}
+            CATALOGUE_IMAGE=${{ env.CATALOGUE_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build both installers

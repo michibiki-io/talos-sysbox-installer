@@ -11,6 +11,7 @@ import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from official_sources import collect, verify_catalogue, is_notice
 
 LOCK = json.loads(Path('/work/versions.lock.json').read_text())
 OUT = Path('/out')
@@ -126,7 +127,7 @@ def rebuild_sysbox():
         for library in set(re.findall(r'(/[^\s()]+\.a)',linkmap.read_text())):
             if Path(library).is_file(): owner(Path(library).resolve())
     for path in source_root.rglob('*'):
-        if path.is_file() and (path.name.lower().startswith(('license','copying','notice')) or path.name=='OSS_DISCLOSURES.md'):
+        if path.is_file() and is_notice(str(path)):
             destination=LIC/'sysbox-source'/path.relative_to(source_root)
             destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
     # Retain the exact checksum-verified module archives used by the build.
@@ -137,13 +138,14 @@ def rebuild_sysbox():
                 destination=SOURCES/'go-modules'/path.relative_to(module_cache)
                 destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
     for path in Path('/root/go/pkg/mod').rglob('*'):
-        if path.is_file() and path.name.lower().startswith(('license','copying','notice')) and '/cache/' not in str(path):
+        if path.is_file() and is_notice(str(path)) and '/cache/' not in str(path):
             destination=LIC/'go-modules'/path.relative_to(Path('/root/go/pkg/mod'))
             destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
     return target
 
 
 def main():
+    verify_catalogue(LOCK, Path('/work/catalogue-image-digests').read_text())
     LIC.mkdir(parents=True)
     shutil.copy2('/work/LICENSE', LIC / 'MIT')
     shutil.copy2('/work/GO-LICENSE', LIC / 'GO-LICENSE')
@@ -153,21 +155,23 @@ def main():
     LOCAL.joinpath('etc/containers').mkdir(parents=True)
     download(LOCK['sysbox_package'], Path('/work/sysbox.deb'))
     subprocess.run(['dpkg-deb', '--extract', '/work/sysbox.deb', '/work/sysbox'], check=True)
-    download(LOCK['containerd_package'], Path('/work/containerd.tar.gz'))
-    with tarfile.open('/work/containerd.tar.gz') as archive:
-        member = archive.getmember('bin/ctr')
-        Path('/work/ctr').write_bytes(archive.extractfile(member).read())
-        Path('/work/ctr').chmod(0o755)
     for component, spec in LOCK['sources'].items():
         archive = SOURCES / (component + '.tar.gz')
         download(spec, archive)
         with tarfile.open(archive) as tf:
             for m in tf:
-                if m.isfile() and (Path(m.name).name.lower().startswith(('license','copying','notice')) or Path(m.name).name=='OSS_DISCLOSURES.md'):
+                if m.isfile() and is_notice(m.name):
                     dest = LIC / component / Path(*Path(m.name).parts[1:])
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(tf.extractfile(m).read())
     shutil.copytree('/work/sysbox/usr/share/doc', LIC / 'sysbox-package', dirs_exist_ok=True)
+    ctr_source=Path('/work/containerd-source')
+    extract_source(SOURCES/'containerd.tar.gz',ctr_source)
+    subprocess.run(['go','build','-buildvcs=false','-trimpath','-tags','netgo osusergo','-ldflags','-buildid= -s -w -X github.com/containerd/containerd/v2/version.Version=v2.1.6','-o','/work/ctr','./cmd/ctr'],cwd=ctr_source,env=dict(os.environ,CGO_ENABLED='0',GOTOOLCHAIN='local',GOFLAGS='-mod=vendor -p=2'),check=True)
+    ctr_build_info=run(['go','version','-m','/work/ctr'])
+    if not re.search(r'\bCGO_ENABLED=0\b',ctr_build_info):
+        raise RuntimeError('ctr has unaccounted C linkage; refusing redistribution')
+    official_inventory=collect(LOCK,SOURCES,LIC,Path('/work/project/build/official-sources.lock.json'))
     rebuilt=rebuild_sysbox()
     binaries = {}
     for daemon in ('sysbox-runc', 'sysbox-mgr', 'sysbox-fs'):
@@ -232,7 +236,7 @@ logToConsole: false
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
-    report = {'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
+    report = {'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
     OUT.joinpath('build-metadata.json').write_text(json.dumps(report, indent=2) + '\n')
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1
