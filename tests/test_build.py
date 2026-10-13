@@ -63,6 +63,9 @@ class BuildTests(unittest.TestCase):
             with mock.patch.object(build,'ROOT',root): build.source_archive(out,selected)
             with tarfile.open(out/'sources.tar.gz') as tf:
                 self.assertEqual(tf.extractfile('project/versions.lock.json').read(),selected.read_bytes())
+                for member in tf:
+                    self.assertEqual((member.uid,member.gid,member.uname,member.gname,member.mtime),(0,0,'root','root',0))
+                    self.assertEqual(member.pax_headers,{})
             with mock.patch.object(validation,'ROOT',root):
                 validation.verify_source_inputs(metadata,selected)
                 with self.assertRaises(RuntimeError): validation.verify_source_inputs(metadata,root/'versions.lock.json')

@@ -2,6 +2,7 @@
 """Build amd64 images and immutable composition records. No registry needed locally."""
 import argparse
 import hashlib
+import gzip
 import io
 import json
 import os
@@ -69,14 +70,25 @@ def retag_archive(source, target, image):
             dst.addfile(m, stream)
 
 
+def archive_member(member):
+    # Do not redistribute the build host's account/domain, IDs or timestamps.
+    member.uid=member.gid=0
+    member.uname=member.gname='root'
+    member.mtime=0
+    member.pax_headers={}
+    return member
+
+
 def source_archive(out, selected_lock):
-    with tarfile.open(out/'sources.tar.gz','w:gz') as tf:
-        tf.add(out/'evidence/sources', arcname='sources')
-        tf.add(out/'evidence/build-metadata.json', arcname='build-metadata.json')
+    # Most inputs are already compressed archives; a fast outer gzip keeps
+    # large corresponding-source bundles practical on disposable CI runners.
+    with (out/'sources.tar.gz').open('wb') as output, gzip.GzipFile(fileobj=output,mode='wb',filename='',mtime=0,compresslevel=1) as zipped, tarfile.open(fileobj=zipped,mode='w') as tf:
+        tf.add(out/'evidence/sources', arcname='sources',filter=archive_member)
+        tf.add(out/'evidence/build-metadata.json', arcname='build-metadata.json',filter=archive_member)
         project=out/'evidence/project'
         if hashlib.sha256((project/'versions.lock.json').read_bytes()).digest()!=hashlib.sha256(selected_lock.read_bytes()).digest():
             raise RuntimeError('Selected lock changed after the isolated build')
-        tf.add(project,arcname='project')
+        tf.add(project,arcname='project',filter=archive_member)
 
 
 def main():
