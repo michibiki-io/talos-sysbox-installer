@@ -109,23 +109,28 @@ jobs:
         env:
           PROJECT_VERSION: ${{ needs.prepare.outputs.docker_tag }}
         run: python3 scripts/build.py --version "$PROJECT_VERSION" --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-      - name: Attach corresponding sources before binary publication
-        if: steps.original.outputs.reuse != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create '${{ needs.prepare.outputs.git_tag }}' --draft --title '${{ needs.prepare.outputs.git_tag }}' --notes 'Source assets staged; image publication pending.'
-          gh release upload '${{ needs.prepare.outputs.git_tag }}' .build/sources.tar.gz .build/images.json .build/evidence/build-metadata.json
-          gh release edit '${{ needs.prepare.outputs.git_tag }}' --draft=false
       - name: Registry login
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check publication prerequisites before staging
+        if: steps.original.outputs.completed != 'true'
+        run: python3 scripts/publish.py --preflight-only --images .build/images.json --output .build/preflight-images.json
+      - name: Retain original archives and corresponding sources
+        if: steps.original.outputs.reuse != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/release/stage_release.py --tag '${{ needs.prepare.outputs.git_tag }}' --preflight .build/preflight-images.json
+      - name: Make matching sources public before every binary push
+        if: steps.original.outputs.completed != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit '${{ needs.prepare.outputs.git_tag }}' --draft=false
       - name: Publish and require anonymous pull
         run: |
-          if [ '${{ steps.original.outputs.reuse }}' = true ]; then
+          if [ '${{ steps.original.outputs.completed }}' = true ]; then
             python3 scripts/publish.py --verify-existing --images .build/images.json --output .build/verified-images.json
             python3 - <<'PY'
           import json, pathlib

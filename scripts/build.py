@@ -59,6 +59,13 @@ def archive_config_digest(archive):
         return 'sha256:'+hashlib.sha256(tf.extractfile(entry['Config']).read()).hexdigest()
 
 
+def file_sha256(path):
+    digest=hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda:source.read(1024*1024),b''):digest.update(chunk)
+    return digest.hexdigest()
+
+
 def retag_archive(source, target, image):
     # imager names the archive after the base image. Rewrite only RepoTags
     # before docker load so no SideroLabs tag is overwritten or pushed.
@@ -160,8 +167,12 @@ def main():
             (destination/'inputs.json').write_text(json.dumps(inputs,indent=2)+'\n')
             record['installers'].append(inputs)
     record['image_config_digests']={extension:archive_config_digest(out/'extension.tar')}
+    record['image_archives']={extension:{'file':'extension.tar','sha256':file_sha256(out/'extension.tar')}}
     for installer in record['installers']:
         record['image_config_digests'][installer['image']]=archive_config_digest(out/installer['variant']/'image.tar')
+        filename=installer['variant']+'-image.tar'
+        shutil.copyfile(out/installer['variant']/'image.tar',out/filename)
+        record['image_archives'][installer['image']]={'file':filename,'sha256':file_sha256(out/filename)}
     (out/'images.json').write_text(json.dumps(record,indent=2)+'\n')
 
 

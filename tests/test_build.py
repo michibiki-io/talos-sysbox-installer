@@ -29,7 +29,84 @@ validation=importlib.util.module_from_spec(spec);spec.loader.exec_module(validat
 spec=importlib.util.spec_from_file_location('official_sources',ROOT/'build/official_sources.py')
 official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
 
+def load_release(name):
+    spec=importlib.util.spec_from_file_location(name,ROOT/'scripts/release'/f'{name}.py')
+    mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+    return mod
+
+stage=load_release('stage_release')
+reuse=load_release('reuse_inputs')
+
 class BuildTests(unittest.TestCase):
+    def original_archives(self,directory):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ('extension','standard','vmware')]
+        inputs={'extension':{'image':images[0],'oci_digest':'sha256:local'},'installers':[{'image':i,'extensions':['oci-layout@sha256:local']} for i in images[1:]],'image_config_digests':{},'image_archives':{}}
+        for image,filename in zip(images,stage.ARCHIVES):
+            archive=directory/filename
+            with tarfile.open(archive,'w') as tf:
+                for name,data in [('manifest.json',json.dumps([{'RepoTags':[image],'Config':'config.json','Layers':[]}]).encode()),('config.json',json.dumps({'architecture':'amd64','image':image}).encode())]:
+                    member=tarfile.TarInfo(name);member.size=len(data);tf.addfile(member,io.BytesIO(data))
+            inputs['image_config_digests'][image]=build.archive_config_digest(archive)
+            inputs['image_archives'][image]={'file':filename,'sha256':build.file_sha256(archive)}
+        (directory/'images.json').write_text(json.dumps(inputs))
+        (directory/'sources.tar.gz').write_bytes(b'sources')
+        (directory/'evidence').mkdir();(directory/'evidence/build-metadata.json').write_text('{}')
+        return inputs
+
+    def test_preflight_does_not_push_or_check_anonymous_access(self):
+        with tempfile.TemporaryDirectory() as d:
+            inputs=self.original_archives(Path(d))
+            with mock.patch.object(publish,'existing_manifest',return_value=None),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else inputs['image_config_digests'][args[-1]]),mock.patch.object(publish.subprocess,'run') as push,mock.patch.object(publish,'anonymous_digest') as anonymous:
+                self.assertEqual(publish.publish_images(inputs,preflight_only=True),{'preflight':True,'inputs':inputs})
+                push.assert_not_called();anonymous.assert_not_called()
+
+    def test_failed_or_stale_preflight_cannot_create_release(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);inputs=self.original_archives(root)
+            for preflight in ({'preflight':False,'inputs':inputs},{'preflight':True,'inputs':{}}):
+                with mock.patch.object(stage.subprocess,'run') as mutate,mock.patch.object(stage,'find_release') as lookup:
+                    with self.assertRaises(RuntimeError):stage.stage('example/repo','v0.1.0',root,preflight)
+                    mutate.assert_not_called();lookup.assert_not_called()
+
+    def test_stage_retains_all_archives_before_original_inputs_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);inputs=self.original_archives(root)
+            with mock.patch.object(stage,'find_release',return_value=None),mock.patch.object(stage.subprocess,'run') as run:
+                stage.stage('example/repo','v0.1.0',root,{'preflight':True,'inputs':inputs})
+                commands=[call.args[0] for call in run.call_args_list]
+                self.assertIn('--draft',commands[0])
+                for filename in stage.ARCHIVES:self.assertIn(str(root/filename),commands[1])
+                self.assertNotIn(str(root/'images.json'),commands[1])
+                self.assertEqual(commands[-1],['gh','release','upload','v0.1.0',str(root/'images.json')])
+
+    def test_only_unmarked_draft_can_replace_partial_assets(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);inputs=self.original_archives(root);proof={'preflight':True,'inputs':inputs}
+            with mock.patch.object(stage,'find_release',return_value={'draft':True,'assets':[]}),mock.patch.object(stage.subprocess,'run') as run:
+                stage.stage('example/repo','v0.1.0',root,proof)
+                self.assertIn('--clobber',run.call_args_list[0].args[0])
+            for release in ({'draft':False,'assets':[]},{'draft':True,'assets':[{'name':'images.json'}]}):
+                with mock.patch.object(stage,'find_release',return_value=release),mock.patch.object(stage.subprocess,'run') as run:
+                    with self.assertRaises(RuntimeError):stage.stage('example/repo','v0.1.0',root,proof)
+                    run.assert_not_called()
+
+    def test_restore_checks_all_original_archives_before_any_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);inputs=self.original_archives(root)
+            with mock.patch.object(reuse.subprocess,'run') as run:
+                reuse.restore_images(inputs,root)
+                self.assertEqual([c.args[0] for c in run.call_args_list],[['docker','load','-i',str(root/f)] for f in stage.ARCHIVES])
+            with (root/stage.ARCHIVES[-1]).open('ab') as corrupt:corrupt.write(b'corruption')
+            with mock.patch.object(reuse.subprocess,'run') as run:
+                with self.assertRaisesRegex(RuntimeError,'checksum'):reuse.restore_images(inputs,root)
+                run.assert_not_called()
+
+    def test_partial_publication_pushes_only_missing_original_tags(self):
+        with tempfile.TemporaryDirectory() as d:
+            inputs=self.original_archives(Path(d));images=list(inputs['image_config_digests'])
+            with mock.patch.object(publish,'existing_manifest',side_effect=[{'config':{'digest':inputs['image_config_digests'][images[0]]}},None,None]),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else inputs['image_config_digests'][args[-1]]),mock.patch.object(publish.subprocess,'run') as push,mock.patch.object(publish,'anonymous_digest',return_value='sha256:'+'a'*64):
+                publish.publish_images(inputs)
+                self.assertEqual([c.args[0] for c in push.call_args_list],[['docker','push',i] for i in images[1:]])
     def test_catalogue_rejects_official_image_not_in_locked_release(self):
         lock=json.loads((ROOT/'versions.lock.json').read_text())
         entries='\n'.join(lock['extensions'].values())

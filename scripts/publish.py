@@ -58,7 +58,7 @@ def existing_manifest(image):
     raise RuntimeError('Cannot establish registry tag state; refusing publication')
 
 
-def publish_images(inputs, verify_existing=False):
+def publish_images(inputs, verify_existing=False, preflight_only=False):
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
     if len(images)!=3:raise RuntimeError('release requires extension and both installers')
     if not verify_existing:
@@ -81,6 +81,8 @@ def publish_images(inputs, verify_existing=False):
         if manifest and manifest['config']['digest']!=expected:
             raise RuntimeError('Immutable release tag already points to a different image; refusing overwrite')
         states.append((image,manifest))
+    if preflight_only:
+        return {'preflight':True,'inputs':copy.deepcopy(inputs)}
     # Create all three packages before anonymous checks. New GHCR packages may
     # need an owner visibility change; verify-existing can then finish safely.
     for image,manifest in states:
@@ -96,9 +98,11 @@ def publish_images(inputs, verify_existing=False):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--images',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--verify-existing',action='store_true',help='verify original release inputs without rebuilding or pushing')
+    mode=p.add_mutually_exclusive_group()
+    mode.add_argument('--verify-existing',action='store_true',help='verify original release inputs without rebuilding or pushing')
+    mode.add_argument('--preflight-only',action='store_true',help='check store, loaded images and all tags without publishing')
     a=p.parse_args();inputs=json.loads(a.images.read_text())
-    a.output.write_text(json.dumps(publish_images(inputs,a.verify_existing),indent=2)+'\n')
+    a.output.write_text(json.dumps(publish_images(inputs,a.verify_existing,a.preflight_only),indent=2)+'\n')
 
 
 if __name__=='__main__':main()
