@@ -1,0 +1,7 @@
+**
+!build/
+!build/**
+!supervisor/
+!supervisor/**
+!versions.lock.json
+!LICENSE

@@ -1,0 +1,32 @@
+# Build arguments are supplied exclusively from versions.lock.json by build.py.
+ARG GO_IMAGE
+ARG UBUNTU_IMAGE
+FROM ${GO_IMAGE} AS supervisor
+WORKDIR /src
+COPY supervisor/ ./
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -buildid=' -o /supervisor .
+
+FROM ${UBUNTU_IMAGE} AS assemble
+COPY --from=supervisor /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ARG APT_SNAPSHOT
+# Configure the fixed snapshot before any dependency download. Signed indexes
+# and package hashes are checked by apt; expired dates are expected on snapshots.
+RUN SNAPSHOT="$APT_SNAPSHOT" && test -n "$SNAPSHOT" && \
+    rm -f /etc/apt/sources.list.d/* && \
+    printf 'deb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\n' "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list && \
+    apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends ca-certificates python3 rsync kmod iptables fuse3 dpkg-dev
+COPY versions.lock.json /work/versions.lock.json
+COPY build/assemble.py /work/assemble.py
+COPY LICENSE /work/LICENSE
+COPY --from=supervisor /usr/local/go/LICENSE /work/GO-LICENSE
+COPY --from=supervisor /usr/local/go/PATENTS /work/GO-PATENTS
+COPY --from=supervisor /supervisor /work/supervisor
+RUN python3 /work/assemble.py
+
+FROM scratch AS evidence
+COPY --from=assemble /out/ /
+
+FROM scratch AS extension
+COPY --from=assemble /out/rootfs/ /rootfs/
+COPY --from=assemble /out/manifest.yaml /manifest.yaml
+LABEL org.opencontainers.image.source="https://github.com/michibiki-io/talos-sysbox-installer"

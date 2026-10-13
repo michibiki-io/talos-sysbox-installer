@@ -1,0 +1,62 @@
+name: Test
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit checks
+        run: python3 -m unittest discover -s tests -v
+      - uses: docker/setup-buildx-action@v4
+        id: builder
+      - name: Locked inputs
+        run: |
+          python3 - <<'PY'
+          import json, os
+          lock=json.load(open('versions.lock.json'))
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+            f.write('GO_IMAGE='+lock['go']+'\nUBUNTU_IMAGE='+lock['ubuntu']+'\nAPT_SNAPSHOT='+lock['apt_snapshot']+'\n')
+          PY
+      - name: Cached amd64 build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: build/Dockerfile
+          target: evidence
+          platforms: linux/amd64
+          push: false
+          outputs: type=local,dest=.build/evidence
+          build-args: |
+            GO_IMAGE=${{ env.GO_IMAGE }}
+            UBUNTU_IMAGE=${{ env.UBUNTU_IMAGE }}
+            APT_SNAPSHOT=${{ env.APT_SNAPSHOT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build both installers
+        run: python3 scripts/build.py --builder '${{ steps.builder.outputs.name }}'
+      - name: Install locked validation clients
+        run: python3 scripts/install_test_tools.py
+      - name: Supporting Talos-in-Docker runtime checks
+        run: |
+          sudo modprobe br_netfilter
+          python3 test/e2e/scripts/talos_docker.py --rootfs .build/evidence/rootfs --subnet 10.77.0.0/24
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-and-validation-evidence
+          path: |
+            .build/images.json
+            .build/evidence/build-metadata.json
+            .build/standard/inputs.json
+            .build/vmware/inputs.json
+            test/e2e/results/*.json
+          if-no-files-found: warn
