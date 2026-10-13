@@ -73,11 +73,10 @@ def source_archive(out, selected_lock):
     with tarfile.open(out/'sources.tar.gz','w:gz') as tf:
         tf.add(out/'evidence/sources', arcname='sources')
         tf.add(out/'evidence/build-metadata.json', arcname='build-metadata.json')
-        for name in ('supervisor','build','LICENSE'):
-            tf.add(ROOT/name, arcname='project/'+name, filter=lambda member: None if '__pycache__' in member.name or member.name.endswith('.pyc') else member)
-        tf.add(selected_lock, arcname='project/versions.lock.json')
-        for name in ('build.py','publish.py'):
-            if (ROOT/'scripts'/name).is_file():tf.add(ROOT/'scripts'/name,arcname='project/scripts/'+name)
+        project=out/'evidence/project'
+        if hashlib.sha256((project/'versions.lock.json').read_bytes()).digest()!=hashlib.sha256(selected_lock.read_bytes()).digest():
+            raise RuntimeError('Selected lock changed after the isolated build')
+        tf.add(project,arcname='project')
 
 
 def main():
@@ -106,6 +105,8 @@ def main():
         context = Path(tmp)
         for name in ('build', 'supervisor'):
             shutil.copytree(ROOT / name, context / name, ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+        (context/'scripts').mkdir()
+        for name in ('build.py','publish.py'):shutil.copy2(ROOT/'scripts'/name,context/'scripts'/name)
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')
         common = ['docker','buildx','build','--builder',a.builder,'--network',a.network,'--platform','linux/amd64','--build-arg','GO_IMAGE='+lock['go'],'--build-arg','UBUNTU_IMAGE='+lock['ubuntu'],'--build-arg','APT_SNAPSHOT='+lock['apt_snapshot'],'--build-arg','CATALOGUE_IMAGE='+lock['catalogue'],'-f',str(context/'build/Dockerfile')]

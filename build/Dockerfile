@@ -30,12 +30,14 @@ COPY build/ /work/project/build/
 COPY supervisor/ /work/project/supervisor/
 COPY versions.lock.json /work/project/versions.lock.json
 COPY LICENSE /work/project/LICENSE
+COPY scripts/build.py scripts/publish.py /work/project/scripts/
 ARG GENERATE_MODULE_LOCKS=0
 ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
 RUN --mount=type=cache,id=talos-sysbox-installer-sources,target=/source-cache --mount=type=cache,id=talos-sysbox-installer-go-modules,target=/root/go/pkg/mod --mount=type=cache,id=talos-sysbox-installer-go-build,target=/root/.cache/go-build python3 /work/assemble.py
 
 FROM scratch AS evidence
 COPY --from=assemble /out/ /
+COPY --from=assemble /work/project/ /project/
 
 FROM scratch AS extension
 COPY --from=assemble /out/rootfs/ /rootfs/

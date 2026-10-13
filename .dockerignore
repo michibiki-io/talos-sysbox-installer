@@ -5,5 +5,8 @@
 !supervisor/**
 !versions.lock.json
 !LICENSE
+!scripts/
+!scripts/build.py
+!scripts/publish.py
 **/__pycache__/**
 **/*.pyc

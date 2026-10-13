@@ -58,6 +58,8 @@ class BuildTests(unittest.TestCase):
             out=Path(d)/'out';(out/'evidence/sources').mkdir(parents=True)
             metadata={'source_inputs_sha256':{'versions.lock.json':hashlib.sha256(selected.read_bytes()).hexdigest()}}
             (out/'evidence/build-metadata.json').write_text(json.dumps(metadata))
+            (out/'evidence/project').mkdir()
+            (out/'evidence/project/versions.lock.json').write_bytes(selected.read_bytes())
             with mock.patch.object(build,'ROOT',root): build.source_archive(out,selected)
             with tarfile.open(out/'sources.tar.gz') as tf:
                 self.assertEqual(tf.extractfile('project/versions.lock.json').read(),selected.read_bytes())
