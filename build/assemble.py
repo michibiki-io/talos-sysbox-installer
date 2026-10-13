@@ -11,7 +11,7 @@ import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
-from official_sources import collect, verify_catalogue, is_notice
+from official_sources import collect, verify_catalogue, is_notice, stable_json
 
 LOCK = json.loads(Path('/work/versions.lock.json').read_text())
 OUT = Path('/out')
@@ -239,7 +239,7 @@ logToConsole: false
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
     report = {'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
-    OUT.joinpath('build-metadata.json').write_text(json.dumps(report, indent=2) + '\n')
+    OUT.joinpath('build-metadata.json').write_text(stable_json(report))
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1
 metadata:

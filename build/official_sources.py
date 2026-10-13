@@ -12,6 +12,11 @@ import zipfile
 from pathlib import Path
 
 
+def stable_json(value):
+    """Keep provenance bytes independent of filesystem/dictionary ordering."""
+    return json.dumps(value,indent=2,sort_keys=True)+'\n'
+
+
 def verify_catalogue(lock, entries):
     approved=set(entries.splitlines())
     for name in [*lock['standard_extensions'], 'vmtoolsd-guest-agent']:
@@ -107,6 +112,6 @@ def collect(lock, source_root, licenses, manifest_path):
             retain_notices(Path(result['Zip']),licenses/'official/go-modules')
             records.append({k:result[k] for k in ('Path','Version','Sum','GoModSum')})
     inventory={'image_inputs':{'base_installer':manifest['base_installer'],'extensions':manifest['extensions']},'frameworks':manifest['frameworks'],'native_sources':native,'go_modules':records,'local_modules':local_modules,'sbom_packages':packages,'source_provision':'All listed archives, module sources, upstream build recipes, configuration and patches are in sources.tar.gz of the same release. VMware-only agent sources are included in this common source bundle.'}
-    (root/'inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
-    (licenses/'official-inventory.json').write_text(json.dumps(inventory,indent=2)+'\n')
+    (root/'inventory.json').write_text(stable_json(inventory))
+    (licenses/'official-inventory.json').write_text(stable_json(inventory))
     return inventory

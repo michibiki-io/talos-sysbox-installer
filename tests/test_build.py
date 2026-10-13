@@ -38,6 +38,11 @@ stage=load_release('stage_release')
 reuse=load_release('reuse_inputs')
 
 class BuildTests(unittest.TestCase):
+    def test_provenance_bytes_ignore_nested_dictionary_enumeration_order(self):
+        original={'source_files':{'second':'b','first':'a'},'inputs':{'talos':'1.12.6','architecture':'amd64'}}
+        reordered={'inputs':dict(reversed(list(original['inputs'].items()))),'source_files':dict(reversed(list(original['source_files'].items())))}
+        self.assertEqual(official.stable_json(original).encode(),official.stable_json(reordered).encode())
+        self.assertEqual(json.loads(official.stable_json(original)),original)
     def original_archives(self,directory):
         images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ('extension','standard','vmware')]
         inputs={'extension':{'image':images[0],'oci_digest':'sha256:local'},'installers':[{'image':i,'extensions':['oci-layout@sha256:local']} for i in images[1:]],'image_config_digests':{},'image_archives':{}}
