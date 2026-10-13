@@ -1,2 +1,344 @@
 # talos-sysbox-installer
-Custom Talos Linux installer images with Sysbox, available in standard and VMware variants.
+
+Reproducible amd64 Sysbox extension and Talos installers, with standard and VMware variants.
+
+## Contents / 目次
+
+- [English](#english)
+  - [Build and image variants](#build-and-image-variants)
+  - [Installation and runtime opt-in](#installation-and-runtime-opt-in)
+  - [Upgrades and rollback](#upgrades-and-rollback)
+  - [Backend trust and supervision](#backend-trust-and-supervision)
+  - [Validation and compatibility](#validation-and-compatibility)
+  - [Release and licensing](#release-and-licensing)
+  - [Troubleshooting](#troubleshooting)
+- [日本語](#日本語)
+  - [ビルドとイメージの種類](#ビルドとイメージの種類)
+  - [導入とruntimeの選択](#導入とruntimeの選択)
+  - [更新とロールバック](#更新とロールバック)
+  - [backendの特権と監督](#backendの特権と監督)
+  - [検証と互換性](#検証と互換性)
+  - [リリースとライセンス](#リリースとライセンス)
+  - [障害調査](#障害調査)
+
+## English
+
+### Build and image variants
+
+Requirements: amd64 Linux, Python 3.11+, Docker with Buildx, and HTTPS access to the pinned registries, Ubuntu snapshot and upstream release archives.
+No host Go compiler or installed helper programs are used.
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/build.py --version 0.1.0
+```
+
+The locked Go and Ubuntu images build a static supervisor and collect shell, rsync, modprobe, iptables, fusermount3 and their libraries inside a container.
+The three Sysbox binaries are rebuilt from the release's exact component commits using read-only, checksum-verified Go module resolution and the locked builder's static C libraries.
+GNU linker maps identify the actual linked static libraries so their matching sources and licenses accompany the application source and rebuild scripts.
+The checksum-verified upstream package supplies reference release documentation, not host-derived executables.
+Ubuntu's signed snapshot fixes package resolution; upstream archives have SHA-256 locks.
+Build inputs are in [versions.lock.json](versions.lock.json).
+The context physically contains only `build/`, `supervisor/`, the lock and the project license.
+It never includes local configs, logs or state.
+For hosts without a working default Docker bridge, `--network host` is an explicit local build option; it does not change Docker configuration.
+Select an existing Buildx instance with `--builder NAME`.
+
+| Image | Extension set |
+| --- | --- |
+| `ghcr.io/michibiki-io/talos-sysbox-extension` | Sysbox 0.7.1 and supervised privileged node backends |
+| `ghcr.io/michibiki-io/talos-sysbox-installer-standard` | Sysbox, iscsi-tools, util-linux-tools |
+| `ghcr.io/michibiki-io/talos-sysbox-installer-vmware` | Standard set plus vmtoolsd-guest-agent |
+
+All tags have the form `v<project-version>-talos-v<talos-version>`, for example `v0.1.0-talos-v1.12.6`.
+Project semver describes this repository; Talos and Sysbox retain their independent upstream versions.
+Official extensions are consumed directly by digest from the catalogue for the selected Talos release.
+The custom extension is passed to imager through an OCI layout, avoiding a local insecure registry.
+Both the custom profile and the explicit base installer are pinned.
+Generated archives are retagged before loading so they never overwrite or publish a SideroLabs image name.
+
+Outputs under `.build/` include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
+To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
+The VMware agent is reserved for the VMware variant.
+Any new Talos release requires explicit compatibility validation before changing the manifest constraint.
+
+### Installation and runtime opt-in
+
+Use a digest from the actual release's `release-images.json` for installation and upgrades.
+Verify the target architecture, full extension list and target Talos version before a maintenance window.
+Choose the VMware installer only on VMware: the upstream agent restarts continuously and rejects other platforms.
+New-node installation uses `machine.install.image` in the operator's private Talos machine configuration.
+This repository supplies no cluster credentials or embedded machine config.
+
+Runtime registration uses the supported `/etc/cri/conf.d/20-customization.part` fragment.
+First export its existing contents and reconcile any existing `machine.files` entry for that same path.
+For a confirmed fresh node, an explicitly empty input file is appropriate.
+Generate a patch offline:
+
+```sh
+python3 scripts/runtime_patch.py --input-fragment existing.part --output runtime.patch.json
+```
+
+Review the full output before applying it with an explicit Talos config, endpoint and node.
+Do not apply a patch made from an empty fragment to an existing node.
+The generator appends only the dedicated handler, preserves supplied defaults/custom handlers, and refuses an existing `sysbox-runc` entry.
+The handler uses `io.containerd.runc.v2`, `/etc/cri/conf.d/base-spec.json`, `/usr/local/bin/sysbox-runc` and `SystemdCgroup=false`.
+No default runtime setting is changed.
+
+With an explicit kubeconfig and context, apply [RuntimeClass](examples/runtimeclass.yaml), then create [the Docker Pod](examples/docker.yaml) in an authorized namespace.
+The namespace must admit this workload's user-namespace root capabilities; it is not a Restricted Pod Security workload.
+Only Pods specifying `runtimeClassName: sysbox-runc` use Sysbox.
+The example uses `hostUsers: false`, UID/GID 0, `privileged: false`, and no service-account token.
+Run Docker directly with overlay2 and cgroupfs; privileged Docker children and kind nodes remain within the outer user namespace.
+The validated design does not require Podman, manual cgroup delegation, a sysfs adapter, an explicit FUSE device request, a custom Pod seccomp profile, or the `KubeletInUserNamespace` feature gate.
+
+### Upgrades and rollback
+
+Installed extensions are not automatically carried over by Talos upgrades.
+The selected installer must include **every extension the node still needs**, including extensions beyond this repository's default set.
+Record the current OS version, installer digest and extension list privately before upgrading.
+Back up recovery configs outside the build context, check storage/PDB drain requirements, and follow the applicable Talos upgrade procedure for the installed version.
+Do not automatically relax PDBs or skip maintenance approval.
+
+An operator-authorized upgrade uses the chosen digest with explicit `talosctl --talosconfig CONFIG --endpoints ENDPOINT --nodes NODE upgrade --image IMAGE@sha256:DIGEST`.
+After boot, check extension services and repeat functional validation.
+Rollback uses the previously recorded complete installer digest or the applicable Talos rollback procedure, with the same explicit target and authorization.
+Recheck runtime registration, ordinary Pods and Sysbox Pods after rollback.
+Removing Sysbox requires migrating/deleting opted-in workloads and removing its handler and RuntimeClass during an approved maintenance operation.
+
+### Backend trust and supervision
+
+Extension services live under `/usr/local/lib/containers/sysbox-mgr` and `sysbox-fs`.
+Their static supervisors talk to **system containerd** at `/system/run/containerd/containerd.sock`, separate from CRI containerd.
+Only namespace `talos-sysbox` and exact owned task/container IDs `sysbox-mgr` and `sysbox-fs` are cleaned up.
+Ordinary extension services have a private PID namespace, while Sysbox must resolve node PID identities for user-namespace mediation.
+Backends therefore join the node PID namespace and share `/run`, `/var` and `/dev` with shared mount propagation.
+These privileged backends and the system-containerd socket belong to the trusted node runtime.
+An outer non-privileged Pod does not make those node components unprivileged or certify isolation.
+
+Startup waits for connectable sockets with a 60-second deadline; the filesystem daemon additionally waits for the manager socket.
+Each ctr control operation has a 5-second limit.
+On TERM/INT the supervisor sends TERM to its backend, waits at most 10 seconds, then escalates to KILL and removes only its own task/container.
+Talos `restart: always` launches a fresh supervised instance after failure; bounded stale cleanup prevents overlapping owned tasks.
+Manager runs with `--disable-shiftfs`; helper rootfs identifies itself as Talos.
+
+### Validation and compatibility
+
+The manifest is restricted to **Talos 1.12.6**, Sysbox 0.7.1 and amd64.
+The functional design baseline is Talos kernel 6.18.18-talos, Kubernetes 1.35.2 and containerd 2.1.6.
+Runtime validation uses checksum-locked Docker 27.5.1, kind 0.31.0, kindest/node 1.35.0, kubectl 1.35.2 and Helm 3.19.0.
+New artifacts require their own validation; historical design results do not validate this build.
+Arm64, SELinux enforcing and VMware guest-agent runtime behavior are unvalidated unless release-specific evidence explicitly records them.
+
+CI builds both variants and runs supporting **Talos-in-Docker** validation against a newly owned cluster using the host kernel.
+It never connects to an existing real cluster.
+This mode is not real Talos-kernel coverage and does not boot the installer.
+On a disk-constrained Docker host, `--constrained-disk` changes only the disposable node's eviction and image-GC thresholds (5% free disk, 95% high watermark).
+This option is never used on real Talos targets.
+Run it locally only when Docker networking, resources and required host kernel facilities are available:
+The host's `br_netfilter` module must already be loaded; the local harness refuses to change host kernel modules.
+An operator may explicitly authorize a temporary load/unload, while CI loads it only on its disposable runner.
+
+```sh
+python3 test/e2e/scripts/talos_docker.py \
+  --rootfs .build/evidence/rootfs --subnet TEST_SUBNET
+```
+
+Real Talos validation needs an explicitly authorized target with the newly built installer already installed and the runtime registered.
+The runner itself does not upgrade or reboot nodes:
+
+```sh
+python3 scripts/validate_runtime.py \
+  --kubeconfig TEST_KUBECONFIG --context TEST_CONTEXT \
+  --expected-node AUTHORIZED_NODE --environment real-talos \
+  --build-metadata .build/evidence/build-metadata.json \
+  --talosconfig TEST_TALOSCONFIG --talos-context TEST_TALOS_CONTEXT \
+  --endpoint AUTHORIZED_ENDPOINT --node-address AUTHORIZED_ADDRESS \
+  --result test/e2e/results/real-talos.json
+```
+
+It checks direct Docker, a privileged child, kind Ready, Helm rollout, Service DNS/TCP, a changed workload container ID followed by successful child startup, and an ordinary default-runtime Pod.
+Before mutating the test namespace, it verifies the installed three Sysbox binaries and both supervisors against this build's SHA-256 values using explicit Talos API reads.
+It also refuses artifacts whose recorded source inputs differ from the current checkout, preventing prior prototype results from being attributed to a changed build.
+It creates one unique owned namespace and deletes it even on failure.
+It preserves the user's default kubeconfig.
+Public results contain version/kernel information and boolean checks, without node names, addresses, IDs, configs or raw logs.
+
+For service/backend restart and node reboot recovery, obtain separate approval for the exact target and operations.
+Record the installed build's `supervisor_sha256` and binary hashes from `build-metadata.json`, verify the installed files match, and retain a private mapping to the public result.
+Restart each extension service, terminate each exact owned backend via system containerd, and reboot the node in separate approved steps.
+After each step, wait for both services, repeat Docker-child and ordinary-Pod probes, and record pass/fail plus the artifact digest in a sanitized result.
+Verify node PID identity and shared mounts from the backend task's OCI spec.
+Never clean unrelated containerd namespaces/tasks or publish raw service logs.
+VMware functionality requires a separate authorized VMware target; verify the agent is healthy and guest information is reported through VMware tools before claiming coverage.
+
+### Release and licensing
+
+Release automation runs only after a merged `feature/` PR into the repository's current default branch.
+It derives semver and release notes from individual commit subjects/bodies, including breaking-change markers, without using PR titles for classification.
+PR builds have read-only repository permissions and no publication credentials.
+Post-merge publication uses the existing GitHub Actions token and fails unless all three GHCR images are anonymously readable.
+An owner must make newly created GHCR packages public using their existing permissions; a failed anonymous check is not a successful release.
+This repository does not add authentication settings or buy credentials/credits.
+
+Releases attach image digests, effective inputs, package/source checksums and corresponding sources.
+The extension retains third-party license texts, package copyright files and applicable NOTICE files under `/usr/local/share/licenses/talos-sysbox`.
+`sources.tar.gz` includes upstream source archives and matching Ubuntu source packages with packaging patches; distribute it alongside the binaries and keep it available for the corresponding release.
+The project MIT license does not replace Apache-2.0, BSD, GPL or LGPL licenses of bundled software.
+LGPL library replacement remains possible by rebuilding the helper rootfs from the supplied source/build inputs.
+
+### Troubleshooting
+
+| Symptom | Checks |
+| --- | --- |
+| Builder DNS/bridge error | Check the selected builder and Docker network; use an existing working builder or the explicit host-network build option without altering global settings. |
+| Checksum mismatch | Stop; independently investigate upstream assets before editing a lock. |
+| RuntimeClass not found / handler failure | Verify both the Kubernetes RuntimeClass and merged CRI fragment, without changing the default handler. |
+| Service restarts | Check private `ext-sysbox-mgr`/`ext-sysbox-fs` logs, system-containerd availability, socket readiness and exact owned task IDs. |
+| Docker child/kind failure | Verify actual installed artifact, PID/mount propagation, cgroup v2 and kernel facilities; compare sanitized results to the correct environment. |
+| VMware agent restarts on bare metal | Select the standard installer during an approved upgrade. |
+| Anonymous GHCR check fails | Confirm package visibility with the owner; publishing credentials do not prove anonymous access. |
+
+Public upstream references: [Sysbox release](https://github.com/nestybox/sysbox/releases/tag/v0.7.1), [Sysbox design](https://github.com/nestybox/sysbox/blob/v0.7.1/docs/user-guide/design.md), [Talos extension services](https://docs.siderolabs.com/talos/v1.12/build-and-extend-talos/custom-images-and-development/extension-services), [official extensions](https://github.com/siderolabs/extensions), [VMware agent](https://github.com/siderolabs/talos-vmtoolsd), [Ubuntu snapshots](https://snapshot.ubuntu.com/).
+
+## 日本語
+
+### ビルドとイメージの種類
+
+amd64 Linux、Python 3.11 以降、Buildx 付き Docker、固定した registry と Ubuntu snapshot と上流アーカイブへの HTTPS 接続を使用します。
+ホストの Go compiler や helper は使用しません。
+英語節のビルドコマンドで、固定した Go と Ubuntu のコンテナ内から static supervisor、shell、rsync、modprobe、iptables、fusermount3 と共有ライブラリを生成します。
+ビルド入力は `versions.lock.json` にあり、署名付き Ubuntu snapshot と上流アーカイブの SHA-256 を検証します。
+Sysbox の3つの binary は release が固定した component commit、読み取り専用の module 解決と checksum 検証で取得する Go 依存、固定 builder の static C library から再ビルドします。
+GNU linker map で実際に結合された static library を特定し、その対応ソースとライセンスを application source と再ビルド手順と一緒に提供します。
+検証した上流 package はリリース文書の参照に使い、ホスト由来の実行ファイルは使用しません。
+ビルドコンテキストには必要なソースと lock と LICENSE だけを集め、設定、ログ、秘密情報を除外します。
+既定 Docker bridge が動かないホストでは、明示した `--network host` を使用できます。
+Docker の恒久設定は変更しません。
+既存 Buildx instance は `--builder NAME` で選びます。
+
+自作 extension は Sysbox とノード backend を含みます。
+共通版 installer はそれに iscsi-tools と util-linux-tools を加え、VMware 版だけ vmtoolsd-guest-agent を加えます。
+イメージ名は英語節の表を参照してください。
+タグは `v<project-version>-talos-v<talos-version>` です。
+プロジェクトの semantic version、Talos 版、Sysbox 版は別々に管理します。
+公式 extension は対象 Talos の catalogue にある digest を直接使用します。
+自作 extension は OCI layout として imager に渡すため、ローカル insecure registry を必要としません。
+生成した installer archive は読み込む前にこのプロジェクトの名前へ変換します。
+
+`.build/` に3つのイメージ、`images.json`、installer ごとの `inputs.json`、`evidence/build-metadata.json`、`sources.tar.gz` を生成します。
+構成変更は lock のコピーで `standard_extensions` と対応する digest を編集し、`--lock FILE` で指定します。
+VMware agent は VMware 版だけに含めます。
+Talos 互換指定を広げる前に、新しい版で検証してください。
+
+### 導入とruntimeの選択
+
+実際のリリースの `release-images.json` にある digest を使用し、対象 Talos 版、amd64、必要な extension 全件を保守作業前に確認します。
+VMware agent は VMware 以外で失敗して再起動するため、VMware 版は VMware 上で使用します。
+新規ノードの `machine.install.image` は運用者の非公開 machine config に設定します。
+このリポジトリはクラスタ認証情報や埋め込み設定を提供しません。
+
+runtime 登録には `/etc/cri/conf.d/20-customization.part` を使用します。
+既存の内容を取得し、同じパスを持つ `machine.files` 設定とも照合してから、英語節の `runtime_patch.py` コマンドで patch を生成します。
+空の入力は新規ノードであることを確認した場合だけ使います。
+既存ノードの fragment を空の入力から作った patch で上書きしないでください。
+生成処理は既存 handler を保持し、`sysbox-runc` の重複があれば拒否します。
+handler の BinaryName は `/usr/local/bin/sysbox-runc`、SystemdCgroup は false、base spec は `/etc/cri/conf.d/base-spec.json` です。
+既定 runtime は変更しません。
+
+明示した kubeconfig と context で RuntimeClass と Docker Pod 例を適用します。
+外側 Pod は `hostUsers: false`、UID/GID 0、`privileged: false`、API token なしで、`runtimeClassName: sysbox-runc` を指定した Pod だけ Sysbox を使用します。
+Pod 内の Docker は overlay2 と cgroupfs を使用します。
+Docker 子コンテナと kind の特権は外側の user namespace 内にあります。
+user namespace 内の root capability を許可できる namespace が必要で、Restricted Pod Security profile ではありません。
+この設計の基準では Podman、手動 cgroup 委譲、sysfs adapter、FUSE device resource、独自 seccomp profile、KubeletInUserNamespace 設定を必要としません。
+
+### 更新とロールバック
+
+Talos の更新では、既存 extension は自動で引き継がれません。
+次の installer に、ノードが必要とする extension をすべて含めてください。
+このリポジトリの既定セット以外も対象です。
+現在の OS 版、installer digest、extension 一覧を非公開で保存し、復旧設定をビルドコンテキストの外へ退避します。
+PDB やストレージの drain 条件を確認し、対象 Talos 版の更新手順と保守承認に従います。
+PDB を自動で緩和しません。
+
+英語節のように Talos config、endpoint、node、image digest を明示して更新します。
+起動後は extension services と runtime を検証します。
+ロールバックには記録した完全な installer digest または対象版の Talos rollback 手順を使用し、対象と操作の承認を得ます。
+通常 Pod と Sysbox Pod の復旧も確認します。
+Sysbox の削除は、使用中の Pod の移行と handler と RuntimeClass の除去を含む保守作業です。
+
+### backendの特権と監督
+
+extension service 内の supervisor は、CRI とは別の system containerd socket `/system/run/containerd/containerd.sock` を使用します。
+清掃対象は `talos-sysbox` namespace の `sysbox-mgr` と `sysbox-fs` の task と container だけです。
+通常の extension service の PID namespace は private ですが、Sysbox が user namespace を仲介するにはノード上の PID が必要です。
+backend はノード PID namespace に参加し、`/run`、`/var`、`/dev` を shared propagation で共有します。
+これらの特権 backend と system containerd はノードの信頼境界に含まれます。
+外側 Pod の非特権設定は、ノード backend の安全性を保証しません。
+
+起動時の socket 接続待ちは60秒、ctr 操作は各5秒に制限します。
+filesystem daemon は manager socket の接続を待ちます。
+TERM/INT は backend に TERM を送り、最大10秒の後に KILL へ進み、自身の task と container だけを除去します。
+Talos の `restart: always` で再起動し、残った所有 task を限定して清掃します。
+manager は `--disable-shiftfs` を使用し、helper rootfs の os-release は Talos を示します。
+
+### 検証と互換性
+
+manifest の対象は Talos 1.12.6、Sysbox 0.7.1、amd64 です。
+設計上の実行基準は Talos kernel 6.18.18-talos、Kubernetes 1.35.2、containerd 2.1.6 です。
+検証ツールと workload の固定版は英語節にあります。
+新しい成果物には新しい検証が必要で、過去の成功を今回のビルドの成功証拠にしません。
+arm64、SELinux enforcing、VMware agent の実動作は、リリースごとの証拠がある場合だけ検証済みとします。
+
+CI の Talos-in-Docker は、今回の helper rootfs を使う新しい専用クラスタで実行します。
+ホスト kernel を使用する補助検証で、実 Talos kernel や installer の起動を検証するものではありません。
+ディスク容量が制約される Docker ホストでは `--constrained-disk` で専用ノードだけの閾値を空き5%、image GC 開始95%へ調整できます。
+実 Talos 対象には適用しません。
+既存の実ノードへは接続しません。
+Docker networking と必要な kernel 機能とリソースがある環境で、英語節のコマンドを使用します。
+
+実 Talos 検証は、新しい installer を導入済みで runtime 登録済みの、明示的に許可された対象で実行します。
+runner は更新や再起動を行いません。
+kubeconfig、context、期待する node、`real-talos`、結果ファイル、build metadata、Talos API 接続設定を明示します。
+検証 namespace を作る前に、実ノードの Sysbox binary と supervisor を Talos API で読み、今回の SHA-256 と一致することを確認します。
+記録したソース入力と checkout が異なる成果物も拒否し、過去の prototype の成功を変更後のビルドへ流用できないようにします。
+直接 Docker、特権子コンテナ、kind Ready、Helm rollout、Service DNS/TCP、container ID が変わる再作成後の子コンテナ、通常 runtime の Pod を確認します。
+一意の専用 namespace を作り、失敗時も削除します。
+既定 kubeconfig は変更しません。
+公開結果には版、kernel、成否を記録し、ノード名、アドレス、ID、設定、生ログを含めません。
+
+service/backend 再起動とノード再起動は、対象と操作ごとに別途承認を得て実行します。
+`build-metadata.json` の supervisor と各 binary の hash が導入済みファイルと一致することを確認し、公開結果との対応は非公開で保持します。
+各 extension service の再起動、system containerd の所有 backend の停止、ノード再起動を別々に行います。
+各操作後に両サービスの復旧、Docker 子コンテナ、通常 Pod を確認し、artifact digest と成否だけを安全に整えた結果へ記録します。
+backend の OCI spec で PID と mount namespace を確認します。
+別 namespace の task を清掃しません。
+VMware の runtime 対応をうたう前に、承認された VMware 環境で agent の健全性と guest 情報の報告を検証します。
+
+### リリースとライセンス
+
+既定ブランチへマージされた `feature/` PR を起点にリリースします。
+semantic version とノートは各 commit の subject/body と breaking-change marker から生成し、PR title を判定に使いません。
+PR build は read-only 権限で、公開用資格情報を渡しません。
+マージ後の公開は既存の GitHub Actions token を使い、3つの GHCR イメージを匿名で取得できることを確認します。
+新規 GHCR package は所有者が既存権限で public にする必要があります。
+匿名確認が失敗したリリースを成功扱いにしません。
+認証設定の追加は行いません。
+
+リリースにはイメージ digest、実際の入力、package/source checksum、対応ソースを添付します。
+extension image の `/usr/local/share/licenses/talos-sysbox` に第三者ライセンス、copyright、該当 NOTICE を保持します。
+`sources.tar.gz` は対応する上流アーカイブと Ubuntu source package と patch を含み、各 binary リリースと一緒に配布して利用可能な状態を維持します。
+リポジトリの MIT は同梱物の Apache-2.0、BSD、GPL、LGPL を置き換えません。
+提供した source と build input から helper rootfs を再構築し、LGPL ライブラリを交換できます。
+
+### 障害調査
+
+builder の DNS や bridge エラーは、使用中の builder と Docker network を確認し、既存の正常な builder または明示した host-network build を使用します。
+checksum 不一致は処理を止め、lock を変更する前に上流配布物を確認します。
+handler エラーは RuntimeClass と既存設定を保持した CRI fragment の両方を確認します。
+service の再起動ループは、非公開ログ、system containerd、socket、所有 task を調べます。
+Docker や kind の失敗は、導入済み artifact、PID/mount propagation、cgroup v2、kernel 機能を確認し、同じ検証環境の結果と比較します。
+VMware 以外の guest-agent エラーは、承認された更新で共通版へ変更します。
+GHCR の匿名取得に失敗した場合は、所有者に package visibility を確認します。
+公開情報の参照先は英語節にあります。
