@@ -17,13 +17,14 @@ runtime=importlib.util.module_from_spec(spec); spec.loader.exec_module(runtime)
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('--rootfs',required=True,type=Path)
+    p.add_argument('--lock',type=Path,default=ROOT/'versions.lock.json')
     p.add_argument('--subnet',required=True)
     p.add_argument('--constrained-disk',action='store_true',help='Docker test nodes only: allow 5%% free disk, 95%% image GC threshold')
     p.add_argument('--result',type=Path,default=ROOT/'test/e2e/results/talos-in-docker.json')
     a=p.parse_args()
     if not Path('/sys/module/br_netfilter').exists():
         raise RuntimeError('host br_netfilter must be loaded explicitly by the operator before starting Talos-in-Docker')
-    lock=json.loads((ROOT/'versions.lock.json').read_text())
+    lock=json.loads(a.lock.read_text())
     name='sysbox-ci-'+uuid.uuid4().hex[:10]
     if subprocess.run(['docker','network','inspect',name],capture_output=True).returncode==0:
         raise RuntimeError('owned test network name already exists')
@@ -51,7 +52,7 @@ def main():
             subprocess.run([*base,'create','docker','--workers','0','--image',image,'--kubernetes-version','1.35.2','--memory-controlplanes','6GiB','--cpus-controlplanes','4','--subnet',a.subnet,'--talosconfig-destination',str(talos),'--config-patch','@'+str(patch_path),'--mount','type=bind,src='+str(local)+',dst=/usr/local'],env=env,stdout=log,stderr=log,check=True,timeout=600)
         context=subprocess.check_output(['kubectl','--kubeconfig',str(kube),'config','current-context'],env=env,text=True).strip()
         subprocess.run(['kubectl','--kubeconfig',str(kube),'--context',context,'apply','-f',str(ROOT/'examples/runtimeclass.yaml')],env=env,capture_output=True,check=True,timeout=60)
-        subprocess.run(['python3',str(ROOT/'test/e2e/scripts/validate_runtime.py'),'--kubeconfig',str(kube),'--context',context,'--expected-node',name+'-controlplane-1','--environment','talos-in-docker','--build-metadata',str(a.rootfs.resolve().parent/'build-metadata.json'),'--result',str(a.result)],env=env,check=True,timeout=1500)
+        subprocess.run(['python3',str(ROOT/'test/e2e/scripts/validate_runtime.py'),'--kubeconfig',str(kube),'--context',context,'--expected-node',name+'-controlplane-1','--environment','talos-in-docker','--lock',str(a.lock.resolve()),'--build-metadata',str(a.rootfs.resolve().parent/'build-metadata.json'),'--result',str(a.result)],env=env,check=True,timeout=1500)
         outcome=json.loads(a.result.read_text())
     finally:
         with (private/'cleanup.log').open('wb') as log:

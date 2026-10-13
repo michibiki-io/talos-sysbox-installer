@@ -62,6 +62,7 @@ Publication replaces that local reference with the anonymously verified GHCR man
 Outputs under `.build/` include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
 To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
 The VMware agent is reserved for the VMware variant.
+Use the same `--lock FILE` for either runtime validation runner; the selected lock is included as `project/versions.lock.json` in the corresponding-source archive.
 Any new Talos release requires explicit compatibility validation before changing the manifest constraint.
 
 ### Installation and runtime opt-in
@@ -233,6 +234,7 @@ Docker の恒久設定は変更しません。
 `.build/` に3つのイメージ、`images.json`、installer ごとの `inputs.json`、`evidence/build-metadata.json`、`sources.tar.gz` を生成します。
 構成変更は lock のコピーで `standard_extensions` と対応する digest を編集し、`--lock FILE` で指定します。
 VMware agent は VMware 版だけに含めます。
+runtime 検証 runner にも同じ `--lock FILE` を指定します。対応ソースの archive には、選択した lock を `project/versions.lock.json` として保存します。
 Talos 互換指定を広げる前に、新しい版で検証してください。
 
 ### 導入とruntimeの選択

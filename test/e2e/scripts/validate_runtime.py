@@ -19,10 +19,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def verify_source_inputs(metadata, selected_lock):
+    for name,sha in metadata['source_inputs_sha256'].items():
+        relative=Path(name)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise RuntimeError('invalid source input path')
+        path=selected_lock if name=='versions.lock.json' else ROOT/relative
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=sha:
+            raise RuntimeError('artifact source inputs differ from selected inputs; rebuild first')
+
+
 class Runner:
     def __init__(self, args):
         self.args = args
-        self.lock = json.loads((ROOT/'versions.lock.json').read_text())
+        self.lock = json.loads(args.lock.read_text())
         self.namespace = 'sysbox-validation-'+uuid.uuid4().hex[:12]
         self.env = dict(os.environ, KUBECONFIG=str(args.kubeconfig.resolve()))
         self.command = ['kubectl','--kubeconfig',str(args.kubeconfig.resolve()),'--context',args.context,'--request-timeout=30s']
@@ -85,12 +95,7 @@ class Runner:
         metadata=json.loads(self.args.build_metadata.read_text())
         if metadata.get('build_mode')!='release':
             raise RuntimeError('only a completed production build may be validated')
-        for name,sha in metadata['source_inputs_sha256'].items():
-            relative=Path(name)
-            if relative.is_absolute() or '..' in relative.parts:
-                raise RuntimeError('invalid source input path')
-            if hashlib.sha256((ROOT/relative).read_bytes()).hexdigest()!=sha:
-                raise RuntimeError('artifact source inputs differ from current checkout; rebuild first')
+        verify_source_inputs(metadata,self.args.lock)
         nodes=json.loads(self.k(['get','nodes','-o','json']))['items']
         matches=[n for n in nodes if n['metadata']['name']==self.args.expected_node]
         if len(matches)!=1:
@@ -217,6 +222,7 @@ def main():
     p.add_argument('--environment',choices=('real-talos','talos-in-docker'),required=True)
     p.add_argument('--result',type=Path,required=True)
     p.add_argument('--build-metadata',type=Path,required=True)
+    p.add_argument('--lock',type=Path,default=ROOT/'versions.lock.json')
     p.add_argument('--talosconfig',type=Path)
     p.add_argument('--talos-context')
     p.add_argument('--endpoint')

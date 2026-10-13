@@ -1,10 +1,12 @@
 import importlib.util
+import hashlib
 import io
 import json
 import tarfile
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,8 +20,27 @@ def load(name):
 build = load('build')
 runtime = load('runtime_patch')
 publish = load('publish')
+spec=importlib.util.spec_from_file_location('validate_runtime',ROOT/'test/e2e/scripts/validate_runtime.py')
+validation=importlib.util.module_from_spec(spec);spec.loader.exec_module(validation)
 
 class BuildTests(unittest.TestCase):
+    def test_selected_lock_is_archived_and_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'project';root.mkdir()
+            for name in ('supervisor','build'): (root/name).mkdir()
+            (root/'LICENSE').write_text('MIT')
+            (root/'versions.lock.json').write_text('{"default":true}')
+            selected=Path(d)/'custom.json';selected.write_text('{"custom":true}')
+            out=Path(d)/'out';(out/'evidence/sources').mkdir(parents=True)
+            metadata={'source_inputs_sha256':{'versions.lock.json':hashlib.sha256(selected.read_bytes()).hexdigest()}}
+            (out/'evidence/build-metadata.json').write_text(json.dumps(metadata))
+            with mock.patch.object(build,'ROOT',root): build.source_archive(out,selected)
+            with tarfile.open(out/'sources.tar.gz') as tf:
+                self.assertEqual(tf.extractfile('project/versions.lock.json').read(),selected.read_bytes())
+            with mock.patch.object(validation,'ROOT',root):
+                validation.verify_source_inputs(metadata,selected)
+                with self.assertRaises(RuntimeError): validation.verify_source_inputs(metadata,root/'versions.lock.json')
+
     def test_published_composition_uses_registry_digest(self):
         local='sha256:'+'a'*64
         remote='ghcr.io/example/extension@sha256:'+'b'*64

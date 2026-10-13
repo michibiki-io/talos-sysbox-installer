@@ -69,6 +69,15 @@ def retag_archive(source, target, image):
             dst.addfile(m, stream)
 
 
+def source_archive(out, selected_lock):
+    with tarfile.open(out/'sources.tar.gz','w:gz') as tf:
+        tf.add(out/'evidence/sources', arcname='sources')
+        tf.add(out/'evidence/build-metadata.json', arcname='build-metadata.json')
+        for name in ('supervisor','build','LICENSE'):
+            tf.add(ROOT/name, arcname='project/'+name, filter=lambda member: None if '__pycache__' in member.name or member.name.endswith('.pyc') else member)
+        tf.add(selected_lock, arcname='project/versions.lock.json')
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--version', default='0.1.0')
@@ -105,11 +114,7 @@ def main():
     if oci.exists(): shutil.rmtree(oci)
     digest = docker_to_oci(out/'extension.tar', oci)
     record = {'tag':tag, 'extension':{'image':extension, 'oci_digest':digest}, 'installers':[]}
-    with tarfile.open(out/'sources.tar.gz','w:gz') as tf:
-        tf.add(out/'evidence/sources', arcname='sources')
-        tf.add(out/'evidence/build-metadata.json', arcname='build-metadata.json')
-        for name in ('supervisor','build','LICENSE','versions.lock.json'):
-            tf.add(ROOT/name, arcname='project/'+name, filter=lambda member: None if '__pycache__' in member.name or member.name.endswith('.pyc') else member)
+    source_archive(out,a.lock)
     if not a.extension_only:
         for variant in ('standard','vmware'):
             image = a.registry_prefix+'/talos-sysbox-installer-'+variant+':'+tag
