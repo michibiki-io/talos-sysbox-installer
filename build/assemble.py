@@ -135,7 +135,9 @@ def rebuild_sysbox():
     if module_cache.exists():
         for path in module_cache.rglob('*'):
             if path.is_file() and path.suffix in ('.zip','.mod','.info') and 'sumdb' not in path.parts:
-                destination=SOURCES/'go-modules'/path.relative_to(module_cache)
+                relative=path.relative_to(module_cache)
+                if (SOURCES/'official/go-modules'/relative).is_file():continue
+                destination=SOURCES/'go-modules'/relative
                 destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
     for path in Path('/root/go/pkg/mod').rglob('*'):
         if path.is_file() and is_notice(str(path)) and '/cache/' not in str(path):

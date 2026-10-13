@@ -6,7 +6,7 @@ FROM ${CATALOGUE_IMAGE} AS catalogue
 FROM ${GO_IMAGE} AS supervisor
 WORKDIR /src
 COPY supervisor/ ./
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -buildid=' -o /supervisor .
+RUN --mount=type=cache,id=talos-sysbox-installer-go-build,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -buildid=' -o /supervisor .
 
 FROM ${UBUNTU_IMAGE} AS assemble
 COPY --from=supervisor /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
@@ -32,7 +32,7 @@ COPY versions.lock.json /work/project/versions.lock.json
 COPY LICENSE /work/project/LICENSE
 ARG GENERATE_MODULE_LOCKS=0
 ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
-RUN --mount=type=cache,target=/source-cache --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build python3 /work/assemble.py
+RUN --mount=type=cache,id=talos-sysbox-installer-sources,target=/source-cache --mount=type=cache,id=talos-sysbox-installer-go-modules,target=/root/go/pkg/mod --mount=type=cache,id=talos-sysbox-installer-go-build,target=/root/.cache/go-build python3 /work/assemble.py
 
 FROM scratch AS evidence
 COPY --from=assemble /out/ /
