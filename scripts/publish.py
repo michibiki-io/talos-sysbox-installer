@@ -51,13 +51,20 @@ def existing_manifest(image):
         manifest=json.loads(result.stdout)
         if 'config' not in manifest:raise RuntimeError('Unexpected multi-platform release tag')
         return manifest
-    if 'no such manifest:' in result.stderr.lower():return None
+    error=result.stderr.lower()
+    # GHCR reports manifest unknown for both a missing repository and tag.
+    # Never classify auth/transport failures as permission to create a tag.
+    if not any(word in error for word in ('unauthorized','denied','forbidden','timeout','connection')) and any(word in error for word in ('no such manifest:','manifest unknown','name unknown')):return None
     raise RuntimeError('Cannot establish registry tag state; refusing publication')
 
 
 def publish_images(inputs, verify_existing=False):
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
     if len(images)!=3:raise RuntimeError('release requires extension and both installers')
+    if not verify_existing:
+        store=dict(json.loads(subprocess.check_output(['docker','info','--format','{{json .DriverStatus}}'],text=True)))
+        if 'driver-type' in store:
+            raise RuntimeError('Publication requires the classic Docker image store; containerd image store is not supported')
     # Preflight all tags before any push, so one collision prevents partial
     # publication of a different rebuild under the same fixed version.
     states=[]
@@ -65,17 +72,21 @@ def publish_images(inputs, verify_existing=False):
         if not image.startswith('ghcr.io/') or not re.search(r':v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+$',image):
             raise RuntimeError('unexpected release image name/tag')
         manifest=existing_manifest(image)
+        expected=inputs['image_config_digests'][image]
         if verify_existing:
-            expected=inputs['image_config_digests'][image]
             if manifest is None:raise RuntimeError('Original release tag is missing; verification cannot publish it')
         else:
-            expected=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip()
+            loaded=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip()
+            if loaded!=expected:raise RuntimeError('Loaded image does not match the recorded archive configuration digest')
         if manifest and manifest['config']['digest']!=expected:
             raise RuntimeError('Immutable release tag already points to a different image; refusing overwrite')
         states.append((image,manifest))
-    records=[]
+    # Create all three packages before anonymous checks. New GHCR packages may
+    # need an owner visibility change; verify-existing can then finish safely.
     for image,manifest in states:
         if manifest is None:subprocess.run(['docker','push',image],check=True)
+    records=[]
+    for image,_ in states:
         digest=anonymous_digest(image)
         records.append({'image':image,'digestRef':image.split(':')[0]+'@'+digest,'digest':digest,'anonymous_pull':True,'architecture':'amd64'})
     return {'images':records,'inputs':published_inputs(inputs,records[0]['digestRef']),

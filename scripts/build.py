@@ -53,6 +53,12 @@ def docker_to_oci(archive, output):
     return manifest['digest']
 
 
+def archive_config_digest(archive):
+    with tarfile.open(archive) as tf:
+        entry, = json.load(tf.extractfile('manifest.json'))
+        return 'sha256:'+hashlib.sha256(tf.extractfile(entry['Config']).read()).hexdigest()
+
+
 def retag_archive(source, target, image):
     # imager names the archive after the base image. Rewrite only RepoTags
     # before docker load so no SideroLabs tag is overwritten or pushed.
@@ -153,7 +159,9 @@ def main():
             inputs['image'] = image
             (destination/'inputs.json').write_text(json.dumps(inputs,indent=2)+'\n')
             record['installers'].append(inputs)
-    record['image_config_digests']={image:subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip() for image in [extension,*(i['image'] for i in record['installers'])]}
+    record['image_config_digests']={extension:archive_config_digest(out/'extension.tar')}
+    for installer in record['installers']:
+        record['image_config_digests'][installer['image']]=archive_config_digest(out/installer['variant']/'image.tar')
     (out/'images.json').write_text(json.dumps(record,indent=2)+'\n')
 
 

@@ -87,9 +87,9 @@ python3 scripts/runtime_patch.py --input-fragment existing.part --no-existing-ma
 python3 scripts/runtime_patch.py --input-fragment existing.part --existing-machine-files machine-files.json --output runtime.patch.json
 ```
 
-The existing-entry mode uses Talos strategic `$patch: delete` to select only this file path, then adds its replacement within the same patch/application. It preserves permissions and other entries, and refuses missing or duplicate matches in the supplied list. The target entry moves to the end of the list. This works with both single- and multi-document machine configurations; Talos rejects JSON6902 for multi-document input.
+The existing-entry mode uses Talos strategic `$patch: delete` to select only this file path, then adds its replacement within the same patch/application. It preserves permissions and other entries, and refuses missing or duplicate matches in the supplied list. The input fragment must exactly match the current entry content; stale or empty replacements are rejected. The target entry moves to the end of the list. This works with both single- and multi-document machine configurations; Talos rejects JSON6902 for multi-document input.
 Keep the exported array and generated patch private: other file entries may contain secrets. Patch output is mode 0600.
-Use `talosctl patch machineconfig --patch @runtime.patch.json` with explicit connection flags; selector failures require a fresh export and reconciliation, not removal of the delete selector. Recheck the current entry immediately before applying; strategic selectors do not provide a content/resource-version compare-and-swap.
+Changes to `machine.files` require a reboot on Talos 1.12.6. Obtain maintenance approval and check drain/PDB conditions as for an upgrade. Use `talosctl patch machineconfig --mode=staged --patch @runtime.patch.json` with explicit connection flags to stage the change for the next approved reboot. The default auto mode may reboot immediately; selector failures require a fresh export and reconciliation, not removal of the delete selector. Recheck the current entry immediately before applying; strategic selectors do not provide a content/resource-version compare-and-swap.
 Check the handler after both initial boot and an authorized reboot.
 Review the full output before applying it with an explicit Talos config, endpoint and node.
 Do not apply a patch made from an empty fragment to an existing node.
@@ -190,14 +190,14 @@ Release automation runs only after a merged `feature/` PR into the repository's 
 It derives semver and release notes from individual commit subjects/bodies, including breaking-change markers, without using PR titles for classification.
 PR builds have read-only repository permissions and no publication credentials.
 Post-merge publication uses the existing GitHub Actions token and fails unless all three GHCR images are anonymously readable.
-An owner must make newly created GHCR packages public using their existing permissions; a failed anonymous check is not a successful release.
+All tags are checked before publication, then all missing images are pushed before any anonymous check. An owner must make all three newly created GHCR packages public using their existing permissions, then rerun the workflow to verify the original tags without rebuilding or repushing. A failed anonymous check is not a successful release.
 This repository does not add authentication settings or buy credentials/credits.
 
 Releases attach image digests, effective inputs, package/source checksums and corresponding sources.
 The extension retains third-party license texts, package copyright files and applicable NOTICE files under `/usr/local/share/licenses/talos-sysbox`.
 `sources.tar.gz` includes matching Sysbox/ctr sources, Talos 1.12.6 and Linux 6.18.18 sources, the official iSCSI/util-linux extensions, the VMware-only guest agent, checksum-verified Go modules, and matching Ubuntu source packages. The pinned SideroLabs Talos/pkgs/extensions/tools/toolchain repositories provide kernel configuration, patches and rebuild recipes. `build/official-sources.lock.json` binds this inventory to the installer and extension digests; changing those pins requires a matching source inventory update. All three images use this common source bundle, with the VMware agent present only in the VMware installer. The pinned catalogue is checked before assembly. ctr is rebuilt from vendored sources with CGO disabled, and its Go build information is recorded. Sources are attached before image publication; distribute it alongside the binaries and keep it available for the corresponding release.
 The project MIT license does not replace Apache-2.0, BSD, GPL or LGPL licenses of bundled software.
-On publication, every preexisting version tag must have the same image configuration digest as the original artifact; a different rebuild fails before any push. Equal existing images are checked without repushing. A completed-release rerun downloads the original `images.json` and verifies anonymous access/digests with `--verify-existing`, without rebuilding. Partial releases stop for explicit recovery of the original artifacts; do not change an existing version tag or replace its source assets.
+On publication, every preexisting version tag must have the same image configuration digest as the original artifact; a different rebuild fails before any push. Equal existing images are checked without repushing. A completed-release rerun downloads the original `images.json` and verifies anonymous access/digests with `--verify-existing`, without rebuilding. Configuration digests are computed from the saved archive config bytes, not Docker image IDs. Publication requires the classic Docker image store; a containerd image store is rejected explicitly before registry operations. A push interrupted before all tags exist stops for explicit recovery of the original artifacts; do not change an existing version tag or replace its source assets.
 LGPL library replacement remains possible by rebuilding the helper rootfs from the supplied source/build inputs.
 
 ### Troubleshooting
@@ -258,9 +258,9 @@ VMware agent は VMware 以外で失敗して再起動するため、VMware 版�
 
 runtime 登録には `/etc/cri/conf.d/20-customization.part` を使用します。
 同じ `machine.files` entry がないことを確認した場合は `--no-existing-machine-file` を指定します。既存 entry がある場合は、現在の配列全体を非公開 JSON に保存して `--existing-machine-files FILE` に渡します。
-既存 entry は Talos の strategic `$patch: delete` で対象パスだけを選択し、同じ patch/apply 内で置き換える entry を追加します。permissions と他の entry を保持し、入力中の対象の不足・重複を拒否します。対象 entry は配列の末尾へ移ります。単一・複数 document の両方に対応し、Talos が複数 document で拒否する JSON6902 を使いません。
+既存 entry は Talos の strategic `$patch: delete` で対象パスだけを選択し、同じ patch/apply 内で置き換える entry を追加します。permissions と他の entry を保持し、入力中の対象の不足・重複を拒否します。入力 fragment と現在の entry の content が完全一致することを要求し、古い内容や空の内容への置換を拒否します。対象 entry は配列の末尾へ移ります。単一・複数 document の両方に対応し、Talos が複数 document で拒否する JSON6902 を使いません。
 配列と patch は秘密情報を含む可能性があるため公開しません。出力の permission は 0600 です。
-接続先を明示した `talosctl patch machineconfig --patch @runtime.patch.json` を使います。selector が失敗したら現在の設定を再取得して照合し、delete selector を削除しないでください。strategic selector は内容や resource version の compare-and-swap を提供しないため、適用直前にも現在の entry と照合します。初回起動と承認した再起動の両方で handler を確認します。
+Talos 1.12.6 の `machine.files` 変更には再起動が必要です。更新と同じ保守承認と drain／PDB の確認を済ませ、接続先を明示した `talosctl patch machineconfig --mode=staged --patch @runtime.patch.json` で次の承認済み再起動に向けて保存します。既定の auto mode は直後に再起動する場合があります。selector が失敗したら現在の設定を再取得して照合し、delete selector を削除しないでください。strategic selector は内容や resource version の compare-and-swap を提供しないため、適用直前にも現在の entry と照合します。初回起動と承認した再起動の両方で handler を確認します。
 既存の内容を取得し、同じパスを持つ `machine.files` 設定とも照合してから、英語節の `runtime_patch.py` コマンドで patch を生成します。
 空の入力は新規ノードであることを確認した場合だけ使います。
 既存ノードの fragment を空の入力から作った patch で上書きしないでください。
@@ -344,7 +344,7 @@ VMware の runtime 対応をうたう前に、承認された VMware 環境で a
 semantic version とノートは各 commit の subject/body と breaking-change marker から生成し、PR title を判定に使いません。
 PR build は read-only 権限で、公開用資格情報を渡しません。
 マージ後の公開は既存の GitHub Actions token を使い、3つの GHCR イメージを匿名で取得できることを確認します。
-新規 GHCR package は所有者が既存権限で public にする必要があります。
+全 tag を事前確認した後、存在しない3イメージすべてを push してから匿名確認します。新規 GHCR package は所有者が既存権限で3つとも public にし、workflow を再実行して元の tag を再ビルド／再 push せず検証します。
 匿名確認が失敗したリリースを成功扱いにしません。
 認証設定の追加は行いません。
 
@@ -352,7 +352,7 @@ PR build は read-only 権限で、公開用資格情報を渡しません。
 extension image の `/usr/local/share/licenses/talos-sysbox` に第三者ライセンス、copyright、該当 NOTICE を保持します。
 `sources.tar.gz` は Sysbox/ctr、Talos 1.12.6、Linux 6.18.18、公式 iSCSI/util-linux extension、VMware 版専用の guest agent、checksum 検証済み Go module、Ubuntu source package を含みます。固定した SideroLabs の Talos/pkgs/extensions/tools/toolchain リポジトリに kernel 設定・patch・再ビルド recipe が含まれます。`build/official-sources.lock.json` で image digest と対応させ、image pin の変更時には source inventory も更新します。3イメージで共通の source bundle を使い、VMware agent の binary は VMware installer のみに含みます。組み立て前に固定 catalogue と照合します。ctr は vendor source から CGO 無効で再ビルドし、Go build 情報を記録します。binary 公開前に source asset を添付し、各 binary リリースと一緒に配布して利用可能な状態を維持します。
 リポジトリの MIT は同梱物の Apache-2.0、BSD、GPL、LGPL を置き換えません。
-既存の version tag は元の成果物と image configuration digest が一致する必要があります。異なる再ビルド結果は push 前に拒否し、一致する既存イメージは再 push せず検査します。完了済みリリースの再実行は元の `images.json` を取得し、`--verify-existing` で匿名取得と digest を再検証するため、再ビルドしません。途中失敗では元の成果物を使った明示的な復旧まで停止し、既存 tag や source asset を置き換えません。
+既存の version tag は元の成果物と image configuration digest が一致する必要があります。異なる再ビルド結果は push 前に拒否し、一致する既存イメージは再 push せず検査します。完了済みリリースの再実行は元の `images.json` を取得し、`--verify-existing` で匿名取得と digest を再検証するため、再ビルドしません。configuration digest は Docker image ID ではなく保存済み archive の config bytes から計算します。公開は classic Docker image store を要件とし、containerd image store は registry 操作前に明示的に拒否します。全 tag が揃う前に push が中断した場合は元の成果物を使った明示的な復旧まで停止し、既存 tag や source asset を置き換えません。
 提供した source と build input から helper rootfs を再構築し、LGPL ライブラリを交換できます。
 
 ### 障害調査

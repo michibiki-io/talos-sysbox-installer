@@ -39,10 +39,36 @@ class BuildTests(unittest.TestCase):
 
     def test_version_tag_collision_prevents_all_pushes(self):
         images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
-        inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]]}
-        with mock.patch.object(publish,'existing_manifest',side_effect=[None,{'config':{'digest':'sha256:old'}}]),mock.patch.object(publish.subprocess,'check_output',return_value='sha256:new'),mock.patch.object(publish.subprocess,'run') as push:
+        inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]],'image_config_digests':{i:'sha256:new' for i in images}}
+        with mock.patch.object(publish,'existing_manifest',side_effect=[None,{'config':{'digest':'sha256:old'}}]),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else 'sha256:new'),mock.patch.object(publish.subprocess,'run') as push:
             with self.assertRaises(RuntimeError):publish.publish_images(inputs)
             push.assert_not_called()
+
+    def test_first_private_package_does_not_prevent_other_pushes(self):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
+        inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]],'image_config_digests':{i:'sha256:config' for i in images}}
+        events=[]
+        def anonymous(image):
+            events.append(('anonymous',image))
+            raise publish.urllib.error.HTTPError(image,403,'private package',{},None)
+        with mock.patch.object(publish,'existing_manifest',return_value=None),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else 'sha256:config'),mock.patch.object(publish.subprocess,'run',side_effect=lambda args,**kw:events.append(('push',args[-1]))),mock.patch.object(publish,'anonymous_digest',side_effect=anonymous):
+            with self.assertRaises(publish.urllib.error.HTTPError):publish.publish_images(inputs)
+        self.assertEqual(events,[*(('push',image) for image in images),('anonymous',images[0])])
+
+    def test_missing_manifest_and_auth_failure_are_distinguished(self):
+        for error in ('manifest unknown','name unknown','no such manifest: test'):
+            with mock.patch.object(publish.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'',error)):
+                self.assertIsNone(publish.existing_manifest('test'))
+        for error in ('unauthorized: manifest unknown','denied','connection timeout','unexpected server error'):
+            with mock.patch.object(publish.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'',error)):
+                with self.assertRaises(RuntimeError):publish.existing_manifest('test')
+
+    def test_containerd_store_fails_before_registry_or_push(self):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
+        inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]]}
+        with mock.patch.object(publish.subprocess,'check_output',return_value='[["driver-type","io.containerd.snapshotter.v1"]]'),mock.patch.object(publish,'existing_manifest') as inspect,mock.patch.object(publish.subprocess,'run') as push:
+            with self.assertRaisesRegex(RuntimeError,'classic Docker image store'):publish.publish_images(inputs)
+            inspect.assert_not_called();push.assert_not_called()
 
     def test_original_release_verification_never_rebuilds_or_pushes(self):
         images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
@@ -104,6 +130,7 @@ class BuildTests(unittest.TestCase):
                 for name, content in [('manifest.json', json.dumps([{'RepoTags':['ghcr.io/siderolabs/installer-base:v1.12.6'],'Config':'config.json','Layers':[]}]).encode()), ('config.json', b'{"architecture":"amd64"}')]:
                     member = tarfile.TarInfo(name); member.size=len(content); tf.addfile(member,io.BytesIO(content))
             build.retag_archive(src, dst, 'ghcr.io/example/installer:v0.1.0-talos-v1.12.6')
+            self.assertEqual(build.archive_config_digest(dst),'sha256:'+hashlib.sha256(b'{"architecture":"amd64"}').hexdigest())
             with tarfile.open(dst) as tf:
                 self.assertEqual(json.load(tf.extractfile('manifest.json'))[0]['RepoTags'], ['ghcr.io/example/installer:v0.1.0-talos-v1.12.6'])
                 self.assertEqual(tf.extractfile('config.json').read(), b'{"architecture":"amd64"}')
@@ -161,5 +188,14 @@ BinaryName="/other"
         self.assertEqual(patch['machine']['files'][1]['permissions'],384)
         with self.assertRaises(ValueError):runtime.machine_file_patch('',files+[files[1]])
         with self.assertRaises(ValueError):runtime.machine_file_patch('',files[:1])
+
+    def test_stale_or_empty_fragment_cannot_discard_existing_handlers(self):
+        existing='[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.other.options]\nBinaryName="/other"\n'
+        files=[{'path':'/etc/cri/conf.d/20-customization.part','content':existing}]
+        for stale in ('',existing+'\n'):
+            with self.assertRaisesRegex(ValueError,'exactly match'):runtime.machine_file_patch(stale,files)
+        patch=runtime.machine_file_patch(existing,files)
+        config=tomllib.loads(patch['machine']['files'][1]['content'])
+        self.assertEqual(config['plugins']['io.containerd.cri.v1.runtime']['containerd']['runtimes']['other']['options']['BinaryName'],'/other')
 
 if __name__ == '__main__': unittest.main()

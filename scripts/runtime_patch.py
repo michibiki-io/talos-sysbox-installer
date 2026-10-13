@@ -41,6 +41,8 @@ def machine_file_patch(existing, machine_files=None):
     if len(matches)!=1:
         raise ValueError('expected exactly one existing customization entry')
     replacement=dict(machine_files[matches[0]])
+    if replacement.get('content')!=existing:
+        raise ValueError('input fragment does not exactly match the existing customization entry; export and reconcile current content')
     replacement.update(content=entry['content'],op='create')
     # Talos rejects JSON6902 for multi-document configs. Its strategic delete
     # selector removes just this path before the normal merge appends the
