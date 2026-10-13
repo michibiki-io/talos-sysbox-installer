@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Assemble helpers only inside the locked builder; never reads host programs."""
 import hashlib
+import base64
 import json
+import os
 import re
 import shutil
 import subprocess
 import tarfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
 LOCK = json.loads(Path('/work/versions.lock.json').read_text())
@@ -56,6 +59,90 @@ def helper(path, root, destination=None):
         copy_file(dependency, root)
 
 
+def extract_source(archive, destination):
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive) as tf:
+        members=[]
+        for m in tf:
+            parts=Path(m.name).parts[1:]
+            if not parts: continue
+            m.name=str(Path(*parts))
+            members.append(m)
+        tf.extractall(destination, members=members, filter='data')
+
+
+def rebuild_sysbox():
+    source_root=Path('/work/sysbox-source')
+    extract_source(SOURCES/'sysbox.tar.gz', source_root)
+    for component,spec in LOCK['sysbox_components'].items():
+        archive=SOURCES/(component+'.tar.gz')
+        download(spec, archive)
+        extract_source(archive, source_root/component)
+    # Use the upstream packaging compatibility adjustment, inside this builder
+    # only. The exact adjustment is included in the corresponding build source.
+    header=Path('/usr/include/linux/seccomp.h')
+    text=header.read_text()
+    header.write_text(re.sub(r'(#define\s+SECCOMP_IOCTL_NOTIF_ID_VALID\s+)SECCOMP_IOW\(2, __u64\)', r'\1SECCOMP_IOR(2, __u64)', text))
+    target=Path('/work/rebuilt');target.mkdir()
+    links=source_root/'link-maps';links.mkdir()
+    env=dict(os.environ,CGO_ENABLED='1',GOTOOLCHAIN='local',GOFLAGS='-mod=readonly -p=2',GOMAXPROCS='2',GOPROXY='https://proxy.golang.org',GOSUMDB='sum.golang.org',GOPRIVATE='',GONOSUMDB='',GONOPROXY='')
+    generator=SOURCES/'protobuf-generator.zip'
+    download(LOCK['protobuf_generator'],generator)
+    generator_root=Path('/work/protobuf-generator');generator_root.mkdir()
+    with zipfile.ZipFile(generator) as z:
+        z.extractall(generator_root)
+    module=generator_root/f'github.com/golang/protobuf@v{LOCK["protobuf_generator"]["version"]}'
+    tool=Path('/work/protoc-gen-go')
+    subprocess.run(['go','build','-trimpath','-o',str(tool),'./protoc-gen-go'],cwd=module,env=dict(env,CGO_ENABLED='0'),check=True)
+    destination=LIC/'protobuf-generator';destination.mkdir()
+    for license_file in module.glob('LICENSE*'):
+        shutil.copy2(license_file,destination/license_file.name)
+    env['PATH']='/work:'+env['PATH']
+    for part in ('sysboxFs','sysboxMgr'):
+        proto_dir=source_root/'sysbox-ipc'/(part+'Grpc')/(part+'Protobuf')
+        subprocess.run(['protoc','-I.','-I/usr/include',part+'Protobuf.proto','--go_out=plugins=grpc,paths=source_relative:.'],cwd=proto_dir,env=env,check=True)
+        generated=SOURCES/'generated/sysbox-ipc'/(part+'Grpc')/(part+'Protobuf')
+        generated.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(proto_dir/(part+'Protobuf.pb.go'),generated)
+    for component,tags,package in [('sysbox-runc','seccomp apparmor idmapped_mnt netgo osusergo','.'),('sysbox-mgr','idmapped_mnt netgo osusergo','.'),('sysbox-fs','netgo osusergo','./cmd/sysbox-fs')]:
+        module_locks=Path('/work/project/build/sysbox-module-locks')/component
+        generating=os.environ.get('GENERATE_MODULE_LOCKS')=='1'
+        if not generating and module_locks.is_dir():
+            for name in ('go.mod','go.sum'):
+                shutil.copy2(module_locks/name,source_root/component/name)
+        commit=LOCK['sysbox_components'][component]['commit']
+        linkmap=links/(component+'.map')
+        flags=f"-buildid= -w -linkmode=external -extldflags '-static -Wl,-Map,{linkmap}' -X 'main.edition=Community Edition (CE)' -X main.version={LOCK['sysbox']} -X main.commitId={commit} -X main.builtAt=locked-source-build -X main.builtBy=michibiki.io"
+        build_env=dict(env,GOFLAGS='-mod=mod -p=2') if generating else env
+        subprocess.run(['go','build','-buildvcs=false','-trimpath','-tags',tags,'-ldflags',flags,'-o',str(target/component),package],cwd=source_root/component,env=build_env,check=True)
+        for name in ('go.mod','go.sum'):
+            file=source_root/component/name
+            dest=SOURCES/'effective-modules'/component/name
+            dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(file,dest)
+            if generating:
+                print('MODULE_LOCK::'+component+'::'+name+'::'+base64.b64encode(file.read_bytes()).decode(),flush=True)
+        # Linker maps identify the actual static archives. Collect their owners'
+        # matching signed-snapshot source packages and license texts too.
+        for library in set(re.findall(r'(/[^\s()]+\.a)',linkmap.read_text())):
+            if Path(library).is_file(): owner(Path(library).resolve())
+    for path in source_root.rglob('*'):
+        if path.is_file() and (path.name.lower().startswith(('license','copying','notice')) or path.name=='OSS_DISCLOSURES.md'):
+            destination=LIC/'sysbox-source'/path.relative_to(source_root)
+            destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
+    # Retain the exact checksum-verified module archives used by the build.
+    module_cache=Path('/root/go/pkg/mod/cache/download')
+    if module_cache.exists():
+        for path in module_cache.rglob('*'):
+            if path.is_file() and path.suffix in ('.zip','.mod','.info') and 'sumdb' not in path.parts:
+                destination=SOURCES/'go-modules'/path.relative_to(module_cache)
+                destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
+    for path in Path('/root/go/pkg/mod').rglob('*'):
+        if path.is_file() and path.name.lower().startswith(('license','copying','notice')) and '/cache/' not in str(path):
+            destination=LIC/'go-modules'/path.relative_to(Path('/root/go/pkg/mod'))
+            destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
+    return target
+
+
 def main():
     LIC.mkdir(parents=True)
     shutil.copy2('/work/LICENSE', LIC / 'MIT')
@@ -76,19 +163,23 @@ def main():
         download(spec, archive)
         with tarfile.open(archive) as tf:
             for m in tf:
-                if m.isfile() and Path(m.name).name in ('LICENSE', 'NOTICE'):
+                if m.isfile() and (Path(m.name).name.lower().startswith(('license','copying','notice')) or Path(m.name).name=='OSS_DISCLOSURES.md'):
                     dest = LIC / component / Path(*Path(m.name).parts[1:])
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(tf.extractfile(m).read())
     shutil.copytree('/work/sysbox/usr/share/doc', LIC / 'sysbox-package', dirs_exist_ok=True)
+    rebuilt=rebuild_sysbox()
     binaries = {}
     for daemon in ('sysbox-runc', 'sysbox-mgr', 'sysbox-fs'):
-        source = Path('/work/sysbox/usr/bin') / daemon
+        source = rebuilt / daemon
         shutil.copy2(source, LOCAL / 'bin' / daemon)
         binaries[daemon] = hashlib.sha256(source.read_bytes()).hexdigest()
     for daemon in ('sysbox-mgr', 'sysbox-fs'):
         root = LOCAL / 'lib/containers' / daemon
         root.joinpath('etc').mkdir(parents=True)
+        for directory in ('dev','proc','sys','run','var','tmp'):
+            root.joinpath(directory).mkdir(exist_ok=True)
+        root.joinpath('tmp').chmod(0o1777)
         root.joinpath('etc/os-release').write_text(f'NAME="Talos"\nID=talos\nVERSION_ID=v{LOCK["talos"]}\n')
         for name in ('subuid', 'subgid'):
             root.joinpath('etc', name).write_text('sysbox:100000:65536\n')
@@ -139,8 +230,9 @@ logToConsole: false
                 shutil.copy2(license_file, common / license_file.name)
         subprocess.run(['apt-get', 'source', '--download-only', source + '=' + source_version], cwd=SOURCES, check=True)
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
-    hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.iterdir() if p.is_file()}
-    report = {'inputs': LOCK, 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox.'}
+    hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
+    source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
+    report = {'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
     OUT.joinpath('build-metadata.json').write_text(json.dumps(report, indent=2) + '\n')
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1

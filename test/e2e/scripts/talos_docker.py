@@ -51,7 +51,7 @@ def main():
             subprocess.run([*base,'create','docker','--workers','0','--image',image,'--kubernetes-version','1.35.2','--memory-controlplanes','6GiB','--cpus-controlplanes','4','--subnet',a.subnet,'--talosconfig-destination',str(talos),'--config-patch','@'+str(patch_path),'--mount','type=bind,src='+str(local)+',dst=/usr/local'],env=env,stdout=log,stderr=log,check=True,timeout=600)
         context=subprocess.check_output(['kubectl','--kubeconfig',str(kube),'config','current-context'],env=env,text=True).strip()
         subprocess.run(['kubectl','--kubeconfig',str(kube),'--context',context,'apply','-f',str(ROOT/'examples/runtimeclass.yaml')],env=env,capture_output=True,check=True,timeout=60)
-        subprocess.run(['python3',str(ROOT/'test/e2e/scripts/validate_runtime.py'),'--kubeconfig',str(kube),'--context',context,'--expected-node',name+'-controlplane-1','--environment','talos-in-docker','--result',str(a.result)],env=env,check=True,timeout=1500)
+        subprocess.run(['python3',str(ROOT/'test/e2e/scripts/validate_runtime.py'),'--kubeconfig',str(kube),'--context',context,'--expected-node',name+'-controlplane-1','--environment','talos-in-docker','--build-metadata',str(a.rootfs.resolve().parent/'build-metadata.json'),'--result',str(a.result)],env=env,check=True,timeout=1500)
         outcome=json.loads(a.result.read_text())
     finally:
         with (private/'cleanup.log').open('wb') as log:
@@ -76,12 +76,12 @@ def main():
         subprocess.run(['docker','image','rm',image],capture_output=True,timeout=60)
         a.result.parent.mkdir(parents=True,exist_ok=True)
         a.result.write_text(json.dumps(outcome,indent=2)+'\n')
-        if cleanup: shutil.rmtree(private)
+        if cleanup and outcome['passed']: shutil.rmtree(private)
     if not outcome['passed']: raise RuntimeError('isolated Talos validation failed; inspect sanitized result')
 
 
 if __name__=='__main__':
     try: main()
     except Exception as error:
-        print('Talos-in-Docker validation failed ('+type(error).__name__+'); private diagnostics are retained when cleanup fails.')
+        print('Talos-in-Docker validation failed ('+type(error).__name__+'); inspect the private diagnostics and sanitized result.')
         raise SystemExit(1)

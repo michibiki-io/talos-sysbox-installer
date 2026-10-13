@@ -26,9 +26,15 @@ class Runner:
         self.namespace = 'sysbox-validation-'+uuid.uuid4().hex[:12]
         self.env = dict(os.environ, KUBECONFIG=str(args.kubeconfig.resolve()))
         self.command = ['kubectl','--kubeconfig',str(args.kubeconfig.resolve()),'--context',args.context,'--request-timeout=30s']
+        self.private_logs=ROOT/'.tmp/e2e'/('runtime-'+self.namespace)
+        self.private_logs.mkdir(parents=True,mode=0o700,exist_ok=True)
+        self.sequence=0
 
     def k(self, args, data=None, timeout=180):
         p = subprocess.run([*self.command,*args], input=data, capture_output=True, env=self.env, timeout=timeout)
+        self.sequence+=1
+        log=self.private_logs/f'{self.sequence:03d}.log'
+        log.write_bytes(p.stdout+b'\nSTDERR\n'+p.stderr);log.chmod(0o600)
         if p.returncode:
             # Raw API errors may contain node identities or addresses. Preserve
             # privately at the operator's discretion; never publish here.
@@ -76,6 +82,15 @@ class Runner:
             self.upload('/usr/local/bin/'+name,data)
 
     def run(self):
+        metadata=json.loads(self.args.build_metadata.read_text())
+        if metadata.get('build_mode')!='release':
+            raise RuntimeError('only a completed production build may be validated')
+        for name,sha in metadata['source_inputs_sha256'].items():
+            relative=Path(name)
+            if relative.is_absolute() or '..' in relative.parts:
+                raise RuntimeError('invalid source input path')
+            if hashlib.sha256((ROOT/relative).read_bytes()).hexdigest()!=sha:
+                raise RuntimeError('artifact source inputs differ from current checkout; rebuild first')
         nodes=json.loads(self.k(['get','nodes','-o','json']))['items']
         matches=[n for n in nodes if n['metadata']['name']==self.args.expected_node]
         if len(matches)!=1:
@@ -86,9 +101,20 @@ class Runner:
             raise RuntimeError('target is not locked amd64 Talos')
         if self.args.environment=='real-talos' and not info['kernelVersion'].endswith('-talos'):
             raise RuntimeError('real-talos requires an actual Talos kernel')
+        if self.args.environment=='real-talos':
+            if not all((self.args.talosconfig,self.args.talos_context,self.args.endpoint,self.args.node_address)):
+                raise RuntimeError('real Talos validation requires explicit Talos API connection inputs for installed-artifact verification')
+            connection=['talosctl','--talosconfig',str(self.args.talosconfig.resolve()),'--context',self.args.talos_context,'--endpoints',self.args.endpoint,'--nodes',self.args.node_address]
+            expected={('/usr/local/bin/'+name):sha for name,sha in metadata['binary_sha256'].items()}
+            for daemon in ('sysbox-mgr','sysbox-fs'):
+                expected['/usr/local/lib/containers/'+daemon+'/supervisor']=metadata['supervisor_sha256']
+            for path,sha in expected.items():
+                response=subprocess.run([*connection,'read',path],capture_output=True,timeout=45)
+                if response.returncode or hashlib.sha256(response.stdout).hexdigest()!=sha:
+                    raise RuntimeError('installed runtime artifact does not match this build')
         rc=json.loads(self.k(['get','runtimeclass','sysbox-runc','-o','json']))
         if rc['handler']!='sysbox-runc': raise RuntimeError('unexpected RuntimeClass')
-        result={'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':'amd64','checks':{},'cleanup':'unrun','passed':False}
+        result={'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':'amd64','runtime_binary_sha256':metadata['binary_sha256'],'supervisor_sha256':metadata['supervisor_sha256'],'checks':{},'cleanup':'unrun','passed':False}
         created=False
         try:
             ns={'apiVersion':'v1','kind':'Namespace','metadata':{'name':self.namespace,'labels':{'pod-security.kubernetes.io/enforce':'privileged'}}}
@@ -104,6 +130,7 @@ export KUBECONFIG=/workspace/kind.kubeconfig
 export DOCKER_HOST=unix:///run/docker.sock
 kind create cluster --name sysbox-validation --image {self.lock['test_images']['kind_node']} --kubeconfig "$KUBECONFIG" --wait 180s
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
+echo SYSBOX_KIND_READY
 mkdir -p /workspace/chart/templates
 printf 'apiVersion: v2\nname: smoke\nversion: 0.1.0\n' > /workspace/chart/Chart.yaml
 cat > /workspace/chart/templates/resources.yaml <<'YAML'
@@ -136,7 +163,9 @@ spec:
 YAML
 helm upgrade --install smoke /workspace/chart --namespace smoke --create-namespace --wait --timeout 180s
 kubectl -n smoke rollout status deployment/smoke --timeout=180s
+echo SYSBOX_HELM_ROLLOUT
 kubectl -n smoke exec deployment/smoke -- sh -ceu 'test "$(wget -qO- http://smoke.smoke.svc.cluster.local:8080)" = sysbox-ready'
+echo SYSBOX_SERVICE_DNS_TCP
 kind delete cluster --name sysbox-validation --kubeconfig "$KUBECONFIG"
 '''
             self.execute(['sh','-s'],script.encode(),timeout=900)
@@ -182,6 +211,11 @@ def main():
     p.add_argument('--expected-node',required=True)
     p.add_argument('--environment',choices=('real-talos','talos-in-docker'),required=True)
     p.add_argument('--result',type=Path,required=True)
+    p.add_argument('--build-metadata',type=Path,required=True)
+    p.add_argument('--talosconfig',type=Path)
+    p.add_argument('--talos-context')
+    p.add_argument('--endpoint')
+    p.add_argument('--node-address')
     a=p.parse_args()
     if not a.kubeconfig.is_file(): p.error('explicit kubeconfig is required')
     Runner(a).run()

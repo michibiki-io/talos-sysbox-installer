@@ -86,6 +86,7 @@ def main():
         p.error('only amd64 is supported')
     out = a.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    (out/'images.json').unlink(missing_ok=True)
     tag = f'v{a.version}-talos-v{lock["talos"]}'
     extension = a.registry_prefix+'/talos-sysbox-extension:'+tag
     # An allowlisted staging context physically excludes configs/logs even if

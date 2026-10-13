@@ -8,19 +8,27 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... 
 
 FROM ${UBUNTU_IMAGE} AS assemble
 COPY --from=supervisor /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=supervisor /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH GOTOOLCHAIN=local GOMAXPROCS=2
 ARG APT_SNAPSHOT
 # Configure the fixed snapshot before any dependency download. Signed indexes
 # and package hashes are checked by apt; expired dates are expected on snapshots.
 RUN SNAPSHOT="$APT_SNAPSHOT" && test -n "$SNAPSHOT" && \
     rm -f /etc/apt/sources.list.d/* && \
     printf 'deb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb-src [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\n' "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list && \
-    apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends ca-certificates python3 rsync kmod iptables fuse3 dpkg-dev
+    apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends ca-certificates python3 rsync kmod iptables fuse3 dpkg-dev gcc libc6-dev libseccomp-dev pkg-config protobuf-compiler libprotobuf-dev
 COPY versions.lock.json /work/versions.lock.json
 COPY build/assemble.py /work/assemble.py
 COPY LICENSE /work/LICENSE
 COPY --from=supervisor /usr/local/go/LICENSE /work/GO-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /work/GO-PATENTS
 COPY --from=supervisor /supervisor /work/supervisor
+COPY build/ /work/project/build/
+COPY supervisor/ /work/project/supervisor/
+COPY versions.lock.json /work/project/versions.lock.json
+COPY LICENSE /work/project/LICENSE
+ARG GENERATE_MODULE_LOCKS=0
+ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
 RUN python3 /work/assemble.py
 
 FROM scratch AS evidence
