@@ -1,16 +1,16 @@
 name: Release
 
 on:
-  pull_request_target:
-    types:
-      - closed
+  push:
+    branches:
+      - "**"
 
 permissions:
   contents: write
   pull-requests: read
 
 concurrency:
-  group: release-${{ github.repository }}-${{ github.event.repository.default_branch }}
+  group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -18,9 +18,8 @@ jobs:
     name: Prepare release
     runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
     if: >-
-      ${{ github.event.pull_request.merged == true
-      && github.event.pull_request.base.ref == github.event.repository.default_branch
-      && startsWith(github.event.pull_request.head.ref, 'feature/') }}
+      ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && github.event.deleted != true }}
     outputs:
       release_required: ${{ steps.compute.outputs.release_required }}
       release_kind: ${{ steps.compute.outputs.release_kind }}
@@ -28,39 +27,47 @@ jobs:
       git_tag: ${{ steps.compute.outputs.git_tag }}
       docker_tag: ${{ steps.compute.outputs.docker_tag }}
       tag_exists: ${{ steps.compute.outputs.tag_exists }}
+      pr_number: ${{ steps.pr.outputs.number }}
     env:
       RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Check out merge commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
+      - name: Resolve merged feature PR
+        id: pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/release/resolve_merged_pr.py
+
       - name: Fetch tags
+        if: steps.pr.outputs.eligible == 'true'
         run: git fetch --force --tags origin
 
       - name: Fetch PR head for git fallback
+        if: steps.pr.outputs.eligible == 'true'
         continue-on-error: true
         env:
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           git fetch --force origin "refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}" || true
           git fetch --force origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pull/${PR_NUMBER}/head"
 
       - name: Compute release metadata
+        if: steps.pr.outputs.eligible == 'true'
         id: compute
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_COMMIT_COUNT: ${{ github.event.pull_request.commits }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
-          PR_TITLE: ${{ github.event.pull_request.title || '' }}  # diagnostics only; release classification ignores PR titles
+          MERGE_COMMIT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          PR_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_COMMIT_COUNT: ${{ steps.pr.outputs.commit_count }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: python3 scripts/release/compute_release.py
 
       - name: Skip when no release is required
@@ -91,7 +98,7 @@ jobs:
       - name: Check out merge commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Fetch tags
@@ -151,15 +158,15 @@ jobs:
           python3 scripts/release/generate_release_notes.py
           --repo "${GITHUB_REPOSITORY}"
           --previous-tag "${{ needs.prepare.outputs.previous_tag }}"
-          --target "${{ github.event.pull_request.merge_commit_sha }}"
-          --pr-number "${{ github.event.pull_request.number }}"
+          --target "${{ github.sha }}"
+          --pr-number "${{ needs.prepare.outputs.pr_number }}"
           --output .github/tmp/release-notes.md
 
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.git_tag }}
-          target_commitish: ${{ github.event.pull_request.merge_commit_sha }}
+          target_commitish: ${{ github.sha }}
           body_path: .github/tmp/release-notes.md
           draft: false
           prerelease: false

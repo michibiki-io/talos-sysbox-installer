@@ -106,7 +106,7 @@ def source_archive(out, selected_lock):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--version', default='0.1.0')
+    p.add_argument('--version', default='0.2.0')
     p.add_argument('--registry-prefix', default='ghcr.io/michibiki-io')
     p.add_argument('--builder', default=os.environ.get('BUILDX_BUILDER', 'default'))
     p.add_argument('--network', choices=('default','host'), default='default')

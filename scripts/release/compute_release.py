@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 
-INITIAL_VERSION = "v0.1.0"
+INITIAL_VERSION = "v0.2.0"
 CC_SUBJECT_RE = re.compile(r"^(?P<type>[a-zA-Z][\w-]*)(?:\([^)]+\))?(?P<breaking>!)?:\s+(?P<summary>.+)$")
 BREAKING_RE = re.compile(r"(^|\n)BREAKING CHANGES?:", re.IGNORECASE)
 PR_TITLE_PREFIX_RE = re.compile(

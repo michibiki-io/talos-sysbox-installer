@@ -234,7 +234,7 @@ logToConsole: false
                 common = LIC / 'common-licenses'
                 common.mkdir(exist_ok=True)
                 shutil.copy2(license_file, common / license_file.name)
-        subprocess.run(['apt-get', 'source', '--download-only', source + '=' + source_version], cwd=SOURCES, check=True)
+        subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--download-only', source + '=' + source_version], cwd=SOURCES, check=True)
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
