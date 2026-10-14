@@ -5,6 +5,7 @@ import json
 import tarfile
 import tempfile
 import os
+import sys
 import subprocess
 import shutil
 import tomllib
@@ -181,6 +182,70 @@ class ProbePackageTests(unittest.TestCase):
                                   'Source': 'upstream (2)' if filename == 'first' else 'wrong (2)'}])
         with self.assertRaisesRegex(ValueError, 'conflicting'):
             probe_packages.repository_inventory(targets, read)
+
+    def test_source_batch_keeps_all_exact_versions_and_failure_prevents_completion(self):
+        script = compile((ROOT/'build/validation_image.py').read_text(), 'validation_image.py', 'exec')
+        effective = self.selected() + [
+            {'package': 'example', 'source': 'example-source', 'source_version': '2+b1'},
+            {'package': 'example-old', 'source': 'example-source', 'source_version': '1:1.0'}]
+        inventory = {'effective': effective}
+        expected = ['audit=' + self.CANDIDATE, 'example-source=1:1.0', 'example-source=2+b1']
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w:gz') as tf:
+            member = tarfile.TarInfo('bubblewrap/COPYING'); member.size = 7
+            tf.addfile(member, io.BytesIO(b'license'))
+        data = archive.getvalue()
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
+                root = Path(work)
+                def image_path(value):
+                    return root / str(value).lstrip('/')
+                for directory in ('work', 'opt/proc-transfer', 'usr/bin'):
+                    (root/directory).mkdir(parents=True)
+                lock = {'apt_snapshot': '20261001T000000Z', 'validation_sources': {'bubblewrap': {
+                    'version': '0.12.0', 'url': 'https://example.invalid/bubblewrap.tar.gz',
+                    'sha256': hashlib.sha256(data).hexdigest()}}}
+                (root/'work/versions.lock.json').write_text(json.dumps(lock))
+                for name in ('bwrap', 'python3', 'cc', 'nsenter'):
+                    (root/'usr/bin'/name).write_bytes(name.encode())
+                def notices(src, dst, **kwargs):
+                    dst.mkdir(parents=True); (dst/'copyright').write_text('package license')
+                def command(args, **kwargs):
+                    if args[0] != 'sh': return
+                    self.assertEqual(args[:5], ['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only'])
+                    self.assertEqual(args[5:], expected)
+                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True})
+                    (kwargs['cwd']/'audit.dsc').write_bytes(b'partial source')
+                    if failure: raise subprocess.CalledProcessError(100, args)
+                    (kwargs['cwd']/'example.dsc').write_bytes(b'remaining source')
+                with mock.patch('pathlib.Path', side_effect=image_path), \
+                     mock.patch.object(sys, 'version_info', (3, 12)), \
+                     mock.patch.dict(sys.modules, {'validation_packages': probe_packages}), \
+                     mock.patch.object(probe_packages, 'normalize', return_value=inventory), \
+                     mock.patch('urllib.request.urlopen', return_value=io.BytesIO(data)), \
+                     mock.patch.object(shutil, 'copytree', side_effect=notices), \
+                     mock.patch.object(shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                     mock.patch.object(subprocess, 'check_output', side_effect=lambda args, **kw:
+                         {'bwrap': 'bubblewrap 0.12.0', 'python3': 'Python 3.12', 'cc': 'cc fixture'}[args[0]]), \
+                     mock.patch.object(subprocess, 'run', side_effect=command) as run:
+                    if failure:
+                        with self.assertRaises(subprocess.CalledProcessError) as raised: exec(script, {})
+                        self.assertEqual(raised.exception.returncode, 100)
+                    else:
+                        exec(script, {})
+                    self.assertEqual(sum(call.args[0][0] == 'sh' for call in run.call_args_list), 1)
+                sources = root/'opt/validation-sources'
+                self.assertEqual(json.loads((sources/'binary-packages.json').read_text()), inventory)
+                self.assertEqual(json.loads((sources/'packages.json').read_text()),
+                                 [['audit', self.CANDIDATE], ['example-source', '1:1.0'], ['example-source', '2+b1']])
+                self.assertEqual((root/'opt/validation-licenses/BUBBLEWRAP-COPYING').read_bytes(), b'license')
+                manifest = sources/'source-files.sha256.json'
+                self.assertEqual(manifest.exists(), not failure)
+                self.assertEqual((root/'opt/proc-transfer/image-versions.json').exists(), not failure)
+                if not failure:
+                    hashes = json.loads(manifest.read_text())
+                    self.assertEqual(hashes, {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                             for p in sources.iterdir() if p != manifest})
 
 class BuildTests(unittest.TestCase):
     def probe_inputs(self, root):

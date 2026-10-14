@@ -46,8 +46,9 @@ shutil.copy2(source / 'COPYING', licenses / 'BUBBLEWRAP-COPYING')
 (sources / 'binary-packages.json').write_text(json.dumps(package_inventory, indent=2) + '\n')
 package_inputs = sorted({(p['source'], p['source_version']) for p in package_inventory['effective']})
 (sources / 'packages.json').write_text(json.dumps(package_inputs, indent=2) + '\n')
-for package, version in package_inputs:
-    subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only', package + '=' + version], cwd=sources, check=True)
+# Batch exact versions to avoid reloading snapshot indexes for each package.
+subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only',
+                *(package + '=' + version for package, version in package_inputs)], cwd=sources, check=True)
 Path('/opt/proc-transfer/image-versions.json').write_text(json.dumps({
     'bubblewrap': '0.12.0', 'python': subprocess.check_output(['python3', '--version'], text=True).strip(),
     'cc': subprocess.check_output(['cc', '--version'], text=True).splitlines()[0],
