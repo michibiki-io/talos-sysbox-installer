@@ -24,7 +24,7 @@ RUN SNAPSHOT="$APT_SNAPSHOT" && test -n "$SNAPSHOT" && \
 FROM dependencies AS assemble
 COPY --from=catalogue /image-digests /work/catalogue-image-digests
 COPY versions.lock.json /work/versions.lock.json
-COPY build/assemble.py build/official_sources.py /work/
+COPY build/assemble.py build/official_sources.py build/proc_transfer.py /work/
 COPY LICENSE /work/LICENSE
 COPY --from=supervisor /usr/local/go/LICENSE /work/GO-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /work/GO-PATENTS
@@ -33,7 +33,7 @@ COPY build/ /work/project/build/
 COPY supervisor/ /work/project/supervisor/
 COPY versions.lock.json /work/project/versions.lock.json
 COPY LICENSE /work/project/LICENSE
-COPY scripts/build.py scripts/publish.py /work/project/scripts/
+COPY scripts/build.py scripts/publish.py scripts/build_validation_image.py scripts/update_proc_transfer.py scripts/proc_transfer_operator.py /work/project/scripts/
 ARG GENERATE_MODULE_LOCKS=0
 ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
 RUN --mount=type=cache,id=talos-sysbox-installer-sources,target=/source-cache --mount=type=cache,id=talos-sysbox-installer-go-modules,target=/root/go/pkg/mod --mount=type=cache,id=talos-sysbox-installer-go-build,target=/root/.cache/go-build python3 /work/assemble.py
@@ -46,3 +46,35 @@ FROM scratch AS extension
 COPY --from=assemble /out/rootfs/ /rootfs/
 COPY --from=assemble /out/manifest.yaml /manifest.yaml
 LABEL org.opencontainers.image.source="https://github.com/michibiki-io/talos-sysbox-installer"
+
+# Separate validation image; no checkpoint binary or launcher enters extension.
+FROM dependencies AS validation-probe
+RUN sh /work/apt_retry.sh install -y --no-install-recommends meson ninja-build libcap-dev util-linux procps
+COPY --from=assemble /out/validation/ /opt/proc-transfer/
+COPY --from=assemble /out/build-metadata.json /opt/production-build-metadata.json
+COPY --from=assemble /out/rootfs/usr/local/share/licenses/talos-sysbox/ /opt/production-licenses/
+COPY --from=supervisor /usr/local/go/LICENSE /opt/validation-go-LICENSE
+COPY --from=supervisor /usr/local/go/PATENTS /opt/validation-go-PATENTS
+COPY versions.lock.json /work/versions.lock.json
+COPY build/validation_image.py /work/validation_image.py
+RUN python3 /work/validation_image.py && rm -rf /usr/local/go && \
+    groupadd --gid 1001 probe && useradd --uid 1001 --gid 1001 --create-home probe && \
+    chmod -R a+rX /opt/proc-transfer && chmod 755 /opt/proc-transfer/ctr
+USER 1001:1001
+WORKDIR /home/probe
+CMD ["/bin/sleep", "infinity"]
+
+FROM scratch AS validation-tools
+COPY --from=assemble /out/validation/ /
+COPY --from=validation-probe /opt/proc-transfer/image-versions.json /image-versions.json
+
+# Export the complete extra source/license offering before release publication.
+FROM scratch AS validation-sources
+COPY --from=validation-probe /opt/validation-sources/ /packages-and-bubblewrap/
+COPY --from=validation-probe /opt/validation-licenses/ /licenses/
+COPY --from=validation-probe /opt/proc-transfer/image-versions.json /image-versions.json
+COPY --from=assemble /out/build-metadata.json /production-build-metadata.json
+COPY --from=assemble /out/validation/artifacts.lock.json /artifacts.lock.json
+# The validation image's inherited builder layers also carry the Go toolchain.
+# Retain its matching source and notices in the release source offering.
+COPY --from=supervisor /usr/local/go/ /go-toolchain/

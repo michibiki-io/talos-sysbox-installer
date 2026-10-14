@@ -38,6 +38,95 @@ stage=load_release('stage_release')
 reuse=load_release('reuse_inputs')
 
 class BuildTests(unittest.TestCase):
+    def probe_inputs(self, root):
+        inputs = self.original_archives(root)
+        image = 'ghcr.io/example/talos-sysbox-proc-transfer-probe:v0.1.0-talos-v1.12.6'
+        build.retag_archive(root/'extension.tar', root/'probe-image.tar', image)
+        config = build.archive_config_digest(root/'probe-image.tar')
+        inputs['probe'] = {'image': image, 'test_image_lock': {'schema_version': 1,
+            'test_images': {'proc_transfer_probe': {'local_tag': image, 'oci_digest': 'sha256:local',
+            'config_digest': config, 'anonymous_pull_verified': False, 'distribution': 'local-archive-import-only'}}}}
+        inputs['image_config_digests'][image] = config
+        inputs['image_archives'][image] = {'file': 'probe-image.tar', 'sha256': build.file_sha256(root/'probe-image.tar')}
+        (root/'images.json').write_text(json.dumps(inputs))
+        return inputs
+
+    def test_anonymous_proof_checks_original_manifest_config_and_every_blob(self):
+        class Response(io.BytesIO):
+            def __init__(self, data=b'', headers=None, status=200):
+                super().__init__(data); self.headers=headers or {}; self.status=status
+        manifest=json.dumps({'config': {'digest': 'sha256:config', 'size': 2},
+                             'layers': [{'digest': 'sha256:layer', 'size': 3}]}).encode()
+        sha='sha256:'+hashlib.sha256(manifest).hexdigest()
+        for failure in ('none', 'manifest', 'config', 'blob'):
+            calls=[]
+            def request(url, **kwargs):
+                calls.append(url)
+                if isinstance(url, str): return Response(b'{"token":"anonymous"}')
+                if '/manifests/' in url.full_url:
+                    return Response(manifest, {'Docker-Content-Digest': 'sha256:wrong' if failure=='manifest' else sha})
+                size = 2 if url.full_url.endswith('sha256:config') else 3
+                return Response(headers={'Content-Length': str(size)}, status=403 if failure=='blob' else 200)
+            with self.subTest(failure=failure), mock.patch.object(publish.urllib.request, 'urlopen', side_effect=request):
+                if failure=='none':
+                    self.assertEqual(publish.anonymous_digest('ghcr.io/example/probe:fixed', expected_config='sha256:config'), sha)
+                    self.assertEqual(len(calls), 4)
+                    self.assertTrue(all(call.get_method()=='HEAD' for call in calls[-2:]))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        publish.anonymous_digest('ghcr.io/example/probe:fixed', expected_config='sha256:other' if failure=='config' else 'sha256:config')
+
+    def test_optional_probe_stages_and_restores_original_archive_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'find_release', return_value=None), mock.patch.object(stage.subprocess, 'run') as run:
+                stage.stage('example/repo', 'v0.1.0', root, {'preflight': True, 'inputs': inputs})
+                self.assertIn(str(root/'probe-image.tar'), run.call_args_list[1].args[0])
+                self.assertIn(str(root/'sources.tar.gz'), run.call_args_list[1].args[0])
+                self.assertEqual(run.call_args_list[-1].args[0][-1], str(root/'images.json'))
+            with mock.patch.object(reuse.subprocess, 'run') as run:
+                reuse.restore_images(inputs, root)
+                self.assertEqual(run.call_args_list[-1].args[0], ['docker', 'load', '-i', str(root/'probe-image.tar')])
+            (root/'probe-image.tar').write_bytes(b'corrupt')
+            with mock.patch.object(reuse.subprocess, 'run') as run:
+                with self.assertRaises(RuntimeError): reuse.restore_images(inputs, root)
+                run.assert_not_called()
+
+    def test_probe_public_lock_only_after_all_anonymous_proofs_and_immutable_preflight(self):
+        with tempfile.TemporaryDirectory() as work:
+            inputs = self.probe_inputs(Path(work))
+            def inspect(args, **kwargs):
+                return '[]' if args[1] == 'info' else inputs['image_config_digests'][args[-1]]
+            with mock.patch.object(publish, 'existing_manifest', return_value=None), mock.patch.object(publish.subprocess, 'check_output', side_effect=inspect), mock.patch.object(publish.subprocess, 'run') as push, mock.patch.object(publish, 'anonymous_digest', return_value='sha256:'+'a'*64) as proof:
+                result = publish.publish_images(inputs)
+                self.assertEqual(push.call_count, 4); self.assertEqual(proof.call_count, 4)
+                public = result['test_image_lock']['test_images']['proc_transfer_probe']
+                self.assertEqual(public['image'], inputs['probe']['image'].split(':')[0]+'@sha256:'+'a'*64)
+                self.assertTrue(public['anonymous_pull_verified']); self.assertEqual(public['distribution'], 'public-registry')
+                self.assertNotIn('local_tag', public)
+                self.assertFalse(inputs['probe']['test_image_lock']['test_images']['proc_transfer_probe']['anonymous_pull_verified'])
+                proof.side_effect = ['sha256:'+'a'*64]*3 + [RuntimeError('anonymous blob denied')]
+                with self.assertRaisesRegex(RuntimeError, 'blob denied'): publish.publish_images(inputs)
+            with mock.patch.object(publish, 'existing_manifest', side_effect=[None]*3+[{'config': {'digest': 'sha256:wrong'}}]), mock.patch.object(publish.subprocess, 'check_output', side_effect=inspect), mock.patch.object(publish.subprocess, 'run') as push:
+                with self.assertRaisesRegex(RuntimeError, 'Immutable'): publish.publish_images(inputs)
+                push.assert_not_called()
+
+    def test_probe_source_offering_is_opt_in_and_complete_before_archive(self):
+        with tempfile.TemporaryDirectory() as work:
+            out = Path(work); (out/'evidence/sources').mkdir(parents=True)
+            (out/'evidence/project').mkdir(); lock=out/'evidence/project/versions.lock.json'; lock.write_text('{}')
+            (out/'evidence/build-metadata.json').write_text('{}')
+            with self.assertRaisesRegex(RuntimeError, 'probe corresponding'): build.source_archive(out, lock, include_probe=True)
+            source=out/'validation/corresponding-source'; source.mkdir(parents=True)
+            (source/'package.dsc').write_text('fixed source')
+            (out/'validation/test-images.lock.json').write_text('{}')
+            build.source_archive(out, lock, include_probe=True)
+            with tarfile.open(out/'sources.tar.gz') as archive:
+                self.assertEqual(archive.extractfile('sources/probe/package.dsc').read(), b'fixed source')
+                self.assertIn('probe-build-inputs.json', archive.getnames())
+            build.source_archive(out, lock)
+            with tarfile.open(out/'sources.tar.gz') as archive: self.assertNotIn('sources/probe', archive.getnames())
+
     def test_provenance_bytes_ignore_nested_dictionary_enumeration_order(self):
         original={'source_files':{'second':'b','first':'a'},'inputs':{'talos':'1.12.6','architecture':'amd64'}}
         reordered={'inputs':dict(reversed(list(original['inputs'].items()))),'source_files':dict(reversed(list(original['source_files'].items())))}
@@ -130,7 +219,7 @@ class BuildTests(unittest.TestCase):
         images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
         inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]],'image_config_digests':{i:'sha256:config' for i in images}}
         events=[]
-        def anonymous(image):
+        def anonymous(image, **kwargs):
             events.append(('anonymous',image))
             raise publish.urllib.error.HTTPError(image,403,'private package',{},None)
         with mock.patch.object(publish,'existing_manifest',return_value=None),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else 'sha256:config'),mock.patch.object(publish.subprocess,'run',side_effect=lambda args,**kw:events.append(('push',args[-1]))),mock.patch.object(publish,'anonymous_digest',side_effect=anonymous):

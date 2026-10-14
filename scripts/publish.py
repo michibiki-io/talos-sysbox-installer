@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import hashlib
 import re
 import subprocess
 import urllib.error
@@ -11,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 
-def anonymous_digest(image):
+def anonymous_digest(image, expected_config=None):
     host, path=image.split('/',1)
     repo,tag=path.rsplit(':',1)
     scope='repository:'+repo+':pull'
@@ -19,8 +20,13 @@ def anonymous_digest(image):
     token=json.load(urllib.request.urlopen(token_url,timeout=30))['token']
     req=urllib.request.Request('https://'+host+'/v2/'+repo+'/manifests/'+tag,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'})
     with urllib.request.urlopen(req,timeout=30) as response:
-        manifest=json.load(response)
+        data=response.read()
+        manifest=json.loads(data)
         digest=response.headers['Docker-Content-Digest']
+    if digest != 'sha256:' + hashlib.sha256(data).hexdigest():
+        raise RuntimeError('anonymous manifest digest mismatch')
+    if expected_config is not None and manifest['config']['digest'] != expected_config:
+        raise RuntimeError('anonymous image differs from original archive')
     # Prove anonymous access to every blob, not only a public tag/manifest.
     for blob in [manifest['config'], *manifest['layers']]:
         req=urllib.request.Request('https://'+host+'/v2/'+repo+'/blobs/'+blob['digest'],headers={'Authorization':'Bearer '+token},method='HEAD')
@@ -61,6 +67,14 @@ def existing_manifest(image):
 def publish_images(inputs, verify_existing=False, preflight_only=False):
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
     if len(images)!=3:raise RuntimeError('release requires extension and both installers')
+    if 'probe' in inputs:
+        image=inputs['probe']['image']
+        if '/talos-sysbox-proc-transfer-probe:' not in image:
+            raise RuntimeError('unexpected probe image')
+        if inputs['probe']['test_image_lock']['test_images']['proc_transfer_probe']['config_digest'] != inputs['image_config_digests'][image]:
+            raise RuntimeError('probe archive/configuration mismatch')
+        images.append(image)
+    if len(set(images)) != len(images):raise RuntimeError('duplicate release images')
     if not verify_existing:
         store=dict(json.loads(subprocess.check_output(['docker','info','--format','{{json .DriverStatus}}'],text=True)))
         if 'driver-type' in store:
@@ -83,17 +97,26 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
         states.append((image,manifest))
     if preflight_only:
         return {'preflight':True,'inputs':copy.deepcopy(inputs)}
-    # Create all three packages before anonymous checks. New GHCR packages may
+    # Create all selected packages before anonymous checks. New GHCR packages may
     # need an owner visibility change; verify-existing can then finish safely.
     for image,manifest in states:
         if manifest is None:subprocess.run(['docker','push',image],check=True)
     records=[]
     for image,_ in states:
-        digest=anonymous_digest(image)
+        digest=anonymous_digest(image, expected_config=inputs['image_config_digests'][image])
         records.append({'image':image,'digestRef':image.split(':')[0]+'@'+digest,'digest':digest,'anonymous_pull':True,'architecture':'amd64'})
-    return {'images':records,'inputs':published_inputs(inputs,records[0]['digestRef']),
+    result = {'images':records,'inputs':published_inputs(inputs,records[0]['digestRef']),
             'licenses':'See build-metadata.json and /usr/local/share/licenses/talos-sysbox in the extension.',
             'corresponding_source':'sources.tar.gz of this release contains matching Sysbox, Talos/kernel, official extensions, Go modules and Ubuntu sources, build recipes and packaging patches.'}
+    if 'probe' in inputs:
+        test_lock=copy.deepcopy(inputs['probe']['test_image_lock'])
+        probe=test_lock['test_images']['proc_transfer_probe']
+        probe.update({'image': records[-1]['digestRef'], 'oci_digest': records[-1]['digest'],
+                      'distribution': 'public-registry', 'anonymous_pull_verified': True})
+        for key in ('local_tag','archive','archive_sha256','docker_archive','docker_archive_sha256'):
+            probe.pop(key, None)
+        result['test_image_lock']=test_lock
+    return result
 
 
 def main():
@@ -102,6 +125,7 @@ def main():
     mode.add_argument('--verify-existing',action='store_true',help='verify original release inputs without rebuilding or pushing')
     mode.add_argument('--preflight-only',action='store_true',help='check store, loaded images and all tags without publishing')
     a=p.parse_args();inputs=json.loads(a.images.read_text())
+    a.output.unlink(missing_ok=True)
     a.output.write_text(json.dumps(publish_images(inputs,a.verify_existing,a.preflight_only),indent=2)+'\n')
 
 

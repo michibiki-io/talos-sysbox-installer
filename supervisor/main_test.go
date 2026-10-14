@@ -37,6 +37,9 @@ func TestBackendScope(t *testing.T) {
 				t.Errorf("missing %s", required)
 			}
 		}
+		if strings.Contains(args, "--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper") != (daemon == "sysbox-fs") {
+			t.Error("helper environment is not confined to the fs backend")
+		}
 		if strings.Contains(args, "--disable-shiftfs") != (daemon == "sysbox-mgr") {
 			t.Error("wrong daemon flags")
 		}

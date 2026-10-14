@@ -110,7 +110,9 @@ class Runner:
             if not all((self.args.talosconfig,self.args.talos_context,self.args.endpoint,self.args.node_address)):
                 raise RuntimeError('real Talos validation requires explicit Talos API connection inputs for installed-artifact verification')
             connection=['talosctl','--talosconfig',str(self.args.talosconfig.resolve()),'--context',self.args.talos_context,'--endpoints',self.args.endpoint,'--nodes',self.args.node_address]
-            expected={('/usr/local/bin/'+name):sha for name,sha in metadata['binary_sha256'].items()}
+            expected={('/usr/local/bin/'+name):sha for name,sha in metadata['binary_sha256'].items() if name != 'proc-mount-helper'}
+            expected['/usr/local/lib/containers/sysbox-fs/proc-mount-helper']=metadata['binary_sha256']['proc-mount-helper']
+            expected['/usr/local/lib/containers/sysbox-fs/sysbox-fs']=metadata['binary_sha256']['sysbox-fs']
             for daemon in ('sysbox-mgr','sysbox-fs'):
                 expected['/usr/local/lib/containers/'+daemon+'/supervisor']=metadata['supervisor_sha256']
             for path,sha in expected.items():

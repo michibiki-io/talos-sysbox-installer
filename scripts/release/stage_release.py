@@ -22,8 +22,12 @@ def find_release(repo,tag):
 def validate_archives(inputs,directory):
     images=[inputs['extension']['image'],*(item['image'] for item in inputs['installers'])]
     if len(images)!=3 or len(set(images))!=3:raise RuntimeError('Expected three distinct original images')
+    filenames=list(ARCHIVES)
+    if 'probe' in inputs:
+        images.append(inputs['probe']['image']); filenames.append('probe-image.tar')
+    if len(set(images)) != len(images):raise RuntimeError('Duplicate original images')
     paths=[]
-    for image,filename in zip(images,ARCHIVES):
+    for image,filename in zip(images,filenames):
         record=inputs['image_archives'][image]
         if record['file']!=filename:raise RuntimeError('Unexpected original archive name/order')
         path=directory/filename

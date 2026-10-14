@@ -10,7 +10,7 @@ concurrency:
 jobs:
   build:
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Install locked validation clients
@@ -45,6 +45,8 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Build both installers
         run: python3 scripts/build.py --builder '${{ steps.builder.outputs.name }}'
+      - name: Build separate fixed-source validation probe (no publication)
+        run: python3 scripts/build_validation_image.py --builder '${{ steps.builder.outputs.name }}' --output .build/validation --production-metadata .build/evidence/build-metadata.json
       - name: Supporting Talos-in-Docker runtime checks
         run: |
           sudo modprobe br_netfilter
@@ -56,6 +58,10 @@ jobs:
           name: build-and-validation-evidence
           include-hidden-files: true
           path: |
+            .build/validation/test-images.lock.json
+            .build/evidence/validation/artifacts.lock.json
+            .build/evidence/validation/upstream-results.json
+            .build/extension-assertions.json
             .build/images.json
             .build/evidence/build-metadata.json
             .build/standard/inputs.json
