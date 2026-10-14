@@ -2,6 +2,7 @@
 """Build a locked probe archive and corresponding sources; never publish."""
 import argparse
 import json
+import hashlib
 import re
 import subprocess
 import shutil
@@ -16,14 +17,55 @@ import proc_transfer
 
 
 def verify_flattened_archive(archive):
-    """Reject inherited layers in the actual exported distribution artifact."""
+    """Verify one flattened payload plus at most one WORKDIR directory diff."""
     with tarfile.open(archive) as tf:
-        entry, = json.load(tf.extractfile('manifest.json'))
-        config = json.load(tf.extractfile(entry['Config']))
-    count = len(config['rootfs']['diff_ids'])
-    if count != 1 or len(entry['Layers']) != 1:
-        raise RuntimeError('probe image must contain exactly one rootfs layer')
-    return count
+        def regular_file(name):
+            matches = [m for m in tf.getmembers() if m.name == name]
+            if len(matches) != 1 or not matches[0].isreg():
+                raise RuntimeError('probe archive requires a unique regular member: ' + name)
+            return tf.extractfile(matches[0])
+
+        entry, = json.load(regular_file('manifest.json'))
+        config = json.load(regular_file(entry['Config']))
+        layers = entry['Layers']
+        diff_ids = config['rootfs']['diff_ids']
+        count = len(diff_ids)
+        # COPY + WORKDIR produces two diffs even when the home already exists.
+        # Tiny scratch fixtures show an empty diff or home and home/probe directories.
+        if config['rootfs']['type'] != 'layers' or count not in (1, 2) or len(layers) != count:
+            raise RuntimeError('probe image requires one payload and at most one WORKDIR layer')
+        if len(set(layers)) != count or sum(not h.get('empty_layer', False) for h in config['history']) != count:
+            raise RuntimeError('probe image layer/history counts are incoherent')
+        metadata_directories = []
+        payload_files = 0
+        for index, (name, diff_id) in enumerate(zip(layers, diff_ids)):
+            with regular_file(name) as raw:
+                if 'sha256:' + hashlib.file_digest(raw, 'sha256').hexdigest() != diff_id:
+                    raise RuntimeError('probe layer diff ID mismatch')
+            with regular_file(name) as raw, tarfile.open(fileobj=raw, mode='r|') as layer:
+                for member in layer:
+                    parts = member.name.rstrip('/').split('/')
+                    if parts and parts[0] == '.':
+                        parts = parts[1:]
+                    if any(p in ('', '.', '..') or p.startswith('.wh.') for p in parts):
+                        raise RuntimeError('unsafe probe layer path: ' + member.name)
+                    path = '/'.join(parts)
+                    if index == 0:
+                        if member.isreg() and member.size > 0:
+                            payload_files += 1
+                    elif (path not in ('home', 'home/probe') or not member.isdir()
+                          or member.size != 0 or member.linkname):
+                        raise RuntimeError('non-WORKDIR content in secondary probe layer: ' + member.name)
+                    else:
+                        if path in metadata_directories:
+                            raise RuntimeError('duplicate WORKDIR directory: ' + path)
+                        metadata_directories.append(path)
+        if not payload_files:
+            raise RuntimeError('probe payload must contain nonempty regular files')
+    return {'rootfs_layer_count': count, 'filesystem_payload_layer_count': 1,
+            'workdir_metadata_layer_count': count - 1,
+            'workdir_metadata_directories': metadata_directories,
+            'layer_verification': 'sha256-diffids-and-tar-entries'}
 
 
 def main():
@@ -81,7 +123,7 @@ def main():
         raise RuntimeError('probe image must default to UID/GID 1001')
     archive = out / 'probe-image.tar'
     build.run(['docker', 'save', '-o', str(archive), image])
-    rootfs_layer_count = verify_flattened_archive(archive)
+    layer_verification = verify_flattened_archive(archive)
     with tempfile.TemporaryDirectory(prefix='probe-oci-', dir=out) as work:
         layout = Path(work) / 'layout'
         oci_digest = build.docker_to_oci(archive, layout)
@@ -95,7 +137,7 @@ def main():
         'local_tag': image, 'oci_digest': oci_digest, 'config_digest': build.archive_config_digest(archive),
         'archive': 'probe-oci.tar', 'archive_sha256': build.file_sha256(out / 'probe-oci.tar'),
         'docker_archive': archive.name, 'docker_archive_sha256': build.file_sha256(archive), 'anonymous_pull_verified': False,
-        'rootfs_layer_count': rootfs_layer_count,
+        **layer_verification,
         'distribution': 'local-archive-import-only', 'architecture': 'amd64', 'uid': 1001, 'gid': 1001,
         'bubblewrap': '0.12.0', 'launcher_python_minimum': '3.12'},
         'proc_transfer_bootstrap': lock['test_images']['busybox']},

@@ -404,22 +404,96 @@ class BuildTests(unittest.TestCase):
                 gate.assert_called_once_with(inputs, root)
                 lookup.assert_not_called(); run.assert_not_called()
 
-    def test_probe_export_requires_one_actual_rootfs_layer(self):
+    def probe_layer_archive(self, archive, secondary=None, *, config_count=None, history_count=None, extra_layer=False):
+        def layer_bytes(members):
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode='w') as layer:
+                for name, kind, content in members:
+                    member = tarfile.TarInfo(name); member.type = kind
+                    if kind == tarfile.REGTYPE:
+                        member.size = len(content)
+                    elif kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                        member.linkname = content.decode()
+                    layer.addfile(member, io.BytesIO(content) if member.isreg() else None)
+            return buf.getvalue()
+        payload = layer_bytes([('opt/tiny', tarfile.REGTYPE, b'current payload')])
+        layers = [payload] if secondary is None else [payload, layer_bytes(secondary)]
+        if extra_layer:
+            layers.append(layer_bytes([]))
+        names = [f'layer{i}.tar' for i in range(len(layers))]
+        diff_ids = ['sha256:' + hashlib.sha256(data).hexdigest() for data in layers]
+        if config_count is not None:
+            diff_ids = (diff_ids * 3)[:config_count]
+        config = {'rootfs': {'type': 'layers', 'diff_ids': diff_ids},
+                  'history': [{'created_by': 'WORKDIR /home/probe'}] *
+                             (len(layers) if history_count is None else history_count)}
+        with tarfile.open(archive, 'w') as tf:
+            for name, data in [('manifest.json', json.dumps([{'Config': 'config.json', 'Layers': names}]).encode()),
+                               ('config.json', json.dumps(config).encode()), *zip(names, layers)]:
+                member = tarfile.TarInfo(name); member.size = len(data)
+                tf.addfile(member, io.BytesIO(data))
+
+    def test_probe_export_verifies_payload_and_workdir_tar_entries(self):
         with tempfile.TemporaryDirectory() as work:
             archive = Path(work)/'probe.tar'
-            for manifest_count, config_count in ((1, 1), (2, 2), (1, 2), (2, 1), (0, 0)):
-                with tarfile.open(archive, 'w') as tf:
-                    for name, value in [('manifest.json', [{'Config': 'config.json', 'Layers': ['layer.tar']*manifest_count}]),
-                                        ('config.json', {'rootfs': {'diff_ids': ['sha256:layer']*config_count}})]:
-                        data = json.dumps(value).encode()
-                        member = tarfile.TarInfo(name); member.size = len(data)
-                        tf.addfile(member, io.BytesIO(data))
-                with self.subTest(manifest=manifest_count, config=config_count):
-                    if manifest_count == config_count == 1:
-                        self.assertEqual(probe_build.verify_flattened_archive(archive), 1)
-                    else:
-                        with self.assertRaisesRegex(RuntimeError, 'exactly one rootfs layer'):
-                            probe_build.verify_flattened_archive(archive)
+            for directories in (None, [], [('home/', tarfile.DIRTYPE, b''),
+                                            ('home/probe/', tarfile.DIRTYPE, b'')]):
+                with self.subTest(directories=directories):
+                    self.probe_layer_archive(archive, directories)
+                    proof = probe_build.verify_flattened_archive(archive)
+                    self.assertEqual(proof['rootfs_layer_count'], 1 if directories is None else 2)
+                    self.assertEqual(proof['filesystem_payload_layer_count'], 1)
+                    self.assertEqual(proof['workdir_metadata_layer_count'], 0 if directories is None else 1)
+                    self.assertEqual(proof['workdir_metadata_directories'],
+                                     ['home', 'home/probe'] if directories else [])
+                    self.assertEqual(proof['layer_verification'], 'sha256-diffids-and-tar-entries')
+
+    def test_probe_export_rejects_all_secondary_non_workdir_content(self):
+        cases = [('usr/lib/old-libaudit.so', tarfile.REGTYPE, b'old library'),
+                 ('usr/local/go/bin/go', tarfile.REGTYPE, b'old SDK'),
+                 ('home/probe/empty', tarfile.REGTYPE, b''),
+                 ('home/probe', tarfile.REGTYPE, b''),
+                 ('home/probe/.wh.old', tarfile.REGTYPE, b''),
+                 ('home/.wh..wh..opq', tarfile.REGTYPE, b''),
+                 ('home/probe', tarfile.SYMTYPE, b'/usr/local/go'),
+                 ('home/probe', tarfile.LNKTYPE, b'usr/lib/old-libaudit.so'),
+                 ('other', tarfile.DIRTYPE, b''),
+                 ('/', tarfile.DIRTYPE, b''),
+                 ('../home/probe', tarfile.DIRTYPE, b''),
+                 ('/home/probe', tarfile.DIRTYPE, b''),
+                 ('home/../home/probe', tarfile.DIRTYPE, b''),
+                 ('home//probe', tarfile.DIRTYPE, b''),
+                 ('home/probe', tarfile.FIFOTYPE, b'')]
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            for member in cases:
+                with self.subTest(member=member):
+                    self.probe_layer_archive(archive, [member])
+                    with self.assertRaises(RuntimeError):
+                        probe_build.verify_flattened_archive(archive)
+
+    def test_probe_export_rejects_incoherent_counts_and_diffids(self):
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            self.probe_layer_archive(archive, [], extra_layer=True)
+            with self.assertRaisesRegex(RuntimeError, 'at most one WORKDIR'):
+                probe_build.verify_flattened_archive(archive)
+            for count in (0, 1, 3):
+                self.probe_layer_archive(archive, [], config_count=count)
+                with self.subTest(config_count=count), self.assertRaises(RuntimeError):
+                    probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [('home', tarfile.DIRTYPE, b''),
+                                               ('home', tarfile.DIRTYPE, b'')])
+            with self.assertRaisesRegex(RuntimeError, 'duplicate WORKDIR'):
+                probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [], history_count=1)
+            with self.assertRaisesRegex(RuntimeError, 'incoherent'):
+                probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [])
+            data = archive.read_bytes().replace(b'current payload', b'changed payload')
+            archive.write_bytes(data)
+            with self.assertRaisesRegex(RuntimeError, 'diff ID mismatch'):
+                probe_build.verify_flattened_archive(archive)
 
     def test_preflight_does_not_push_or_check_anonymous_access(self):
         with tempfile.TemporaryDirectory() as d:
