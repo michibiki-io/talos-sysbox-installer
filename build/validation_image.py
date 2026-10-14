@@ -9,12 +9,16 @@ import sys
 import tarfile
 import urllib.request
 
+from validation_packages import normalize
+
 if sys.version_info < (3, 12):
     raise ValueError('probe and trusted launcher require Python >=3.12')
 lock = json.loads(Path('/work/versions.lock.json').read_text())
 spec = lock['validation_sources']['bubblewrap']
 if spec['version'] != '0.12.0':
     raise ValueError('original probe requires bubblewrap 0.12.0')
+# Align inherited base binaries before building bwrap or collecting notices.
+package_inventory = normalize(lock['apt_snapshot'])
 sources = Path('/opt/validation-sources')
 sources.mkdir()
 archive = sources / 'bubblewrap.tar.gz'
@@ -39,15 +43,16 @@ licenses = Path('/opt/validation-licenses')
 shutil.copytree('/usr/share/doc', licenses / 'packages', symlinks=True)
 shutil.copytree('/usr/share/common-licenses', licenses / 'common-licenses')
 shutil.copy2(source / 'COPYING', licenses / 'BUBBLEWRAP-COPYING')
-packages = subprocess.check_output(['dpkg-query', '-W', '-f=${source:Package}\t${source:Version}\n'], text=True)
-package_inputs = sorted(set(tuple(line.split('\t')) for line in packages.splitlines()))
+(sources / 'binary-packages.json').write_text(json.dumps(package_inventory, indent=2) + '\n')
+package_inputs = sorted({(p['source'], p['source_version']) for p in package_inventory['effective']})
 (sources / 'packages.json').write_text(json.dumps(package_inputs, indent=2) + '\n')
 for package, version in package_inputs:
-    subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--download-only', package + '=' + version], cwd=sources, check=True)
+    subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only', package + '=' + version], cwd=sources, check=True)
 Path('/opt/proc-transfer/image-versions.json').write_text(json.dumps({
     'bubblewrap': '0.12.0', 'python': subprocess.check_output(['python3', '--version'], text=True).strip(),
     'cc': subprocess.check_output(['cc', '--version'], text=True).splitlines()[0],
     'source': spec, 'apt_snapshot': lock['apt_snapshot'],
+    'apt_packages': package_inventory['effective'],
     'image_binary_sha256': {str(Path(shutil.which(name)).resolve()): hashlib.sha256(Path(shutil.which(name)).resolve().read_bytes()).hexdigest()
                             for name in ('bwrap', 'python3', 'cc', 'nsenter')}}, indent=2) + '\n')
 inventory = {str(path.relative_to(sources)): hashlib.sha256(path.read_bytes()).hexdigest()

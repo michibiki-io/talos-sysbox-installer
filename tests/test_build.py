@@ -29,6 +29,9 @@ validation=importlib.util.module_from_spec(spec);spec.loader.exec_module(validat
 spec=importlib.util.spec_from_file_location('official_sources',ROOT/'build/official_sources.py')
 official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
 
+spec=importlib.util.spec_from_file_location('validation_packages', ROOT/'build/validation_packages.py')
+probe_packages=importlib.util.module_from_spec(spec);spec.loader.exec_module(probe_packages)
+
 def load_release(name):
     spec=importlib.util.spec_from_file_location(name,ROOT/'scripts/release'/f'{name}.py')
     mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
@@ -36,6 +39,148 @@ def load_release(name):
 
 stage=load_release('stage_release')
 reuse=load_release('reuse_inputs')
+
+class ProbePackageTests(unittest.TestCase):
+    # Observed pinned Ubuntu base and signed 20261001 snapshot metadata.
+    OLD = '1:3.1.2-2.1build1.1'
+    CANDIDATE = '1:3.1.2-2.1ubuntu0.1'
+
+    def installed(self):
+        return [{'package': name, 'architecture': arch, 'version': self.OLD,
+                 'source': 'audit', 'source_version': self.OLD}
+                for name, arch in [('libaudit-common', 'all'), ('libaudit1', 'amd64')]]
+
+    def repository(self):
+        return {(p['package'], p['architecture'], self.CANDIDATE):
+                {'source': ('audit', self.CANDIDATE), 'repository': 'signed snapshot index'}
+                for p in self.installed()}
+
+    def selected(self):
+        return probe_packages.resolve(self.installed(),
+            {p['package']: self.CANDIDATE for p in self.installed()},
+            self.repository(), {('audit', self.CANDIDATE)})
+
+    def test_inherited_audit_binaries_are_both_selected_before_source_collection(self):
+        selected = self.selected()
+        self.assertEqual(len(selected), 2)
+        self.assertTrue(all(p['version'] == self.CANDIDATE and
+                            p['source_version'] == self.CANDIDATE for p in selected))
+        # Downloading the newer source while retaining either old binary is rejected.
+        with self.assertRaisesRegex(ValueError, 'effective binary/source differs'):
+            probe_packages.verify_effective(self.installed(), selected, self.installed())
+        probe_packages.verify_effective(selected, selected, self.installed())
+
+    def test_missing_repository_candidates_and_exact_sources_fail_closed(self):
+        for candidates in ({}, {'libaudit1': '(none)'},
+                           {p['package']: self.OLD for p in self.installed()}):
+            with self.subTest(candidates=candidates), self.assertRaisesRegex(ValueError, 'no signed snapshot candidate'):
+                probe_packages.resolve(self.installed(), candidates, self.repository(), {('audit', self.CANDIDATE)})
+        with self.assertRaisesRegex(ValueError, 'no exact snapshot source'):
+            probe_packages.resolve(self.installed(), {p['package']: self.CANDIDATE for p in self.installed()},
+                                   self.repository(), {('audit', self.OLD)})
+
+    def test_source_identity_preserves_binary_rebuild_and_implicit_versions(self):
+        for source, expected in [(None, ('example', '2+b1')), ('upstream', ('upstream', '2+b1')),
+                                 ('upstream (1:2)', ('upstream', '1:2'))]:
+            record = {'Package': 'example', 'Version': '2+b1'}
+            if source: record['Source'] = source
+            self.assertEqual(probe_packages.source_identity(record), expected)
+        selected = self.selected()
+        for field, wrong in [('source', 'different'), ('source_version', self.OLD),
+                             ('version', self.OLD), ('architecture', 'arm64')]:
+            changed = [dict(p) for p in selected]; changed[0][field] = wrong
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'differs'):
+                probe_packages.verify_effective(changed, selected, self.installed())
+        with self.assertRaisesRegex(ValueError, 'removed'):
+            probe_packages.verify_effective(selected[:1], selected[:1], self.installed())
+
+    def targets(self):
+        return [{'Identifier': kind, 'Trusted': 'yes', 'Origin': 'Ubuntu', 'Codename': 'noble',
+                 'Suite': suite, 'Component': component, 'Architecture': 'amd64',
+                 'URI': f'https://snapshot.ubuntu.com/ubuntu/20261001T000000Z/dists/{suite}/{component}/'
+                        + ('source/Sources' if kind == 'Sources' else 'binary-amd64/Packages'),
+                 'Filename': f'{kind}-{suite}-{component}'}
+                for kind in ('Sources', 'Packages') for suite in ('noble', 'noble-updates', 'noble-security')
+                for component in ('main', 'universe')]
+
+    def control(self, records):
+        return '\n\n'.join('\n'.join(f'{k}: {v}' for k, v in r.items()) for r in records)
+
+    def test_unsigned_alternate_snapshot_and_incomplete_indexes_are_rejected(self):
+        targets = self.targets()
+        self.assertEqual(len(probe_packages.snapshot_targets(self.control(targets), '20261001T000000Z', 'amd64')), 12)
+        for field, wrong in [('Trusted', 'no'), ('URI', targets[0]['URI'].replace('20261001', '20261002')),
+                             ('URI', 'https://archive.ubuntu.com/ubuntu/dists/noble/main/source/Sources'),
+                             ('Origin', 'other'), ('Component', 'restricted')]:
+            changed = [dict(t) for t in targets]; changed[0][field] = wrong
+            with self.subTest(field=field, wrong=wrong), self.assertRaisesRegex(ValueError, 'outside trusted'):
+                probe_packages.snapshot_targets(self.control(changed), '20261001T000000Z', 'amd64')
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            probe_packages.snapshot_targets(self.control(targets[:-1]), '20261001T000000Z', 'amd64')
+
+    def test_normalization_installs_exact_versions_and_rechecks_added_dependencies(self):
+        before = self.installed()
+        final = self.selected()
+        dependency = {'package': 'dependency', 'architecture': 'amd64', 'version': '2+b1',
+                      'source': 'dependency-source', 'source_version': '2'}
+        repo = self.repository()
+        repo[('dependency', 'amd64', '2+b1')] = {'source': ('dependency-source', '2'), 'repository': 'signed snapshot index'}
+        sources = {('audit', self.CANDIDATE), ('dependency-source', '2')}
+        def dpkg(packages):
+            return ''.join('installed\t' + '\t'.join(p[f] for f in
+                ('package', 'architecture', 'version', 'source', 'source_version')) + '\n' for p in packages)
+        for failure in ('none', 'old-binary', 'new-source-mismatch', 'missing-added-source'):
+            effective = [dict(p) for p in final] + [dict(dependency)]
+            if failure == 'old-binary': effective[0]['version'] = self.OLD
+            if failure == 'new-source-mismatch': effective[-1]['source_version'] = 'wrong'
+            inventories = iter([dpkg(before), dpkg(effective)])
+            def output(args, **kwargs):
+                if args[0] == 'dpkg': return 'amd64\n'
+                if args[0] == 'dpkg-query': return next(inventories)
+                if args[0] == 'apt-get': return self.control(self.targets())
+                self.assertEqual(args[:4], ['apt-cache', '-o', 'Dir::State::status=/dev/null', 'policy'])
+                self.assertIn('Dir::State::status=/dev/null', args)
+                return ''.join(f"{name}:\n  Candidate: {repo_version}\n" for name, repo_version in
+                    [('libaudit-common', self.CANDIDATE), ('libaudit1', self.CANDIDATE), ('dependency', '2+b1')])
+            available = sources - {('dependency-source', '2')} if failure == 'missing-added-source' else sources
+            with self.subTest(failure=failure), mock.patch.object(probe_packages.subprocess, 'check_output', side_effect=output), \
+                 mock.patch.object(probe_packages, 'repository_inventory', return_value=(repo, available)), \
+                 mock.patch.object(probe_packages.subprocess, 'run') as install:
+                if failure == 'none':
+                    result = probe_packages.normalize('20261001T000000Z')
+                    self.assertEqual(result['before'], before)
+                    self.assertEqual(len(result['effective']), 3)
+                else:
+                    with self.assertRaises(ValueError): probe_packages.normalize('20261001T000000Z')
+                self.assertEqual(install.call_args.args[0], ['sh', '/work/apt_retry.sh', 'install', '-y',
+                    '--no-install-recommends', '--no-remove', 'libaudit-common:all=' + self.CANDIDATE,
+                    'libaudit1:amd64=' + self.CANDIDATE])
+
+    def test_preflight_unavailable_candidate_or_source_prevents_any_install(self):
+        installed = ''.join('installed\t' + '\t'.join(p[f] for f in
+            ('package', 'architecture', 'version', 'source', 'source_version')) + '\n'
+            for p in self.installed())
+        for candidate, sources in [(self.OLD, {('audit', self.CANDIDATE)}), (self.CANDIDATE, set())]:
+            def output(args, **kwargs):
+                if args[0] == 'dpkg': return 'amd64\n'
+                if args[0] == 'dpkg-query': return installed
+                if args[0] == 'apt-get': return self.control(self.targets())
+                return ''.join(f"{p['package']}:\n  Candidate: {candidate}\n" for p in self.installed())
+            with self.subTest(candidate=candidate), \
+                 mock.patch.object(probe_packages.subprocess, 'check_output', side_effect=output), \
+                 mock.patch.object(probe_packages, 'repository_inventory', return_value=(self.repository(), sources)), \
+                 mock.patch.object(probe_packages.subprocess, 'run') as install:
+                with self.assertRaises(ValueError): probe_packages.normalize('20261001T000000Z')
+                install.assert_not_called()
+
+    def test_conflicting_binary_source_identity_is_rejected(self):
+        targets = [{'Identifier': 'Packages', 'URI': 'signed snapshot index', 'Filename': f}
+                   for f in ('first', 'second')]
+        def read(filename):
+            return self.control([{'Package': 'example', 'Architecture': 'amd64', 'Version': '2+b1',
+                                  'Source': 'upstream (2)' if filename == 'first' else 'wrong (2)'}])
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            probe_packages.repository_inventory(targets, read)
 
 class BuildTests(unittest.TestCase):
     def probe_inputs(self, root):

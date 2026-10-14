@@ -56,7 +56,7 @@ COPY --from=assemble /out/rootfs/usr/local/share/licenses/talos-sysbox/ /opt/pro
 COPY --from=supervisor /usr/local/go/LICENSE /opt/validation-go-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /opt/validation-go-PATENTS
 COPY versions.lock.json /work/versions.lock.json
-COPY build/validation_image.py /work/validation_image.py
+COPY build/validation_image.py build/validation_packages.py /work/
 RUN python3 /work/validation_image.py && rm -rf /usr/local/go && \
     groupadd --gid 1001 probe && useradd --uid 1001 --gid 1001 --create-home probe && \
     chmod -R a+rX /opt/proc-transfer && chmod 755 /opt/proc-transfer/ctr
