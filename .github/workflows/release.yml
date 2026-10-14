@@ -1,40 +1,65 @@
 name: Release
 
 on:
-  pull_request_target:
-    types:
-      - closed
+  push:
+    branches:
+      - "**"
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
-
-concurrency:
-  group: release-${{ github.repository }}-${{ github.event.repository.default_branch }}
-  cancel-in-progress: false
 
 jobs:
   prepare:
     name: Prepare release
     runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
     if: >-
-      ${{ github.event.pull_request.merged == true
-      && github.event.pull_request.base.ref == github.event.repository.default_branch
-      && startsWith(github.event.pull_request.head.ref, 'feature/') }}
+      ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && github.event.deleted != true }}
     outputs:
-      release_required: ${{ steps.compute.outputs.release_required }}
-      release_kind: ${{ steps.compute.outputs.release_kind }}
-      previous_tag: ${{ steps.compute.outputs.previous_tag }}
-      git_tag: ${{ steps.compute.outputs.git_tag }}
-      docker_tag: ${{ steps.compute.outputs.docker_tag }}
-      tag_exists: ${{ steps.compute.outputs.tag_exists }}
+      eligible: ${{ steps.pr.outputs.eligible }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      base_ref: ${{ steps.pr.outputs.base_ref }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      commit_count: ${{ steps.pr.outputs.commit_count }}
     env:
       RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Check out merge commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve merged feature PR
+        id: pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/release/resolve_merged_pr.py
+
+  publish:
+    name: Publish release
+    needs: prepare
+    runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
+    if: >-
+      ${{ always()
+      && needs.prepare.result == 'success'
+      && needs.prepare.outputs.eligible == 'true' }}
+    env:
+      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.event.repository.default_branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: read
+    steps:
+      - name: Check out merge commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Fetch tags
@@ -43,8 +68,8 @@ jobs:
       - name: Fetch PR head for git fallback
         continue-on-error: true
         env:
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
         run: |
           git fetch --force origin "refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}" || true
           git fetch --force origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pull/${PR_NUMBER}/head"
@@ -54,13 +79,11 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_COMMIT_COUNT: ${{ github.event.pull_request.commits }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BODY: ${{ github.event.pull_request.body || '' }}
-          PR_TITLE: ${{ github.event.pull_request.title || '' }}  # diagnostics only; release classification ignores PR titles
+          MERGE_COMMIT_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          PR_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          PR_COMMIT_COUNT: ${{ needs.prepare.outputs.commit_count }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
         run: python3 scripts/release/compute_release.py
 
       - name: Skip when no release is required
@@ -74,61 +97,42 @@ jobs:
           git tag -a "${{ steps.compute.outputs.git_tag }}" -m "Release ${{ steps.compute.outputs.git_tag }}"
           git push origin "${{ steps.compute.outputs.git_tag }}"
 
-  publish:
-    name: Publish release
-    needs: prepare
-    runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
-    if: >-
-      ${{ always()
-      && needs.prepare.result == 'success'
-      && needs.prepare.outputs.release_required == 'true' }}
-    env:
-      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
-    permissions:
-      contents: write
-      packages: write
-    steps:
-      - name: Check out merge commit
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-          fetch-depth: 0
-
-      - name: Fetch tags
-        run: git fetch --force --tags origin
       - name: Reuse original release inputs on rerun
         id: original
+        if: steps.compute.outputs.release_required == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/release/reuse_inputs.py --tag '${{ needs.prepare.outputs.git_tag }}'
+        run: python3 scripts/release/reuse_inputs.py --tag '${{ steps.compute.outputs.git_tag }}'
       - uses: docker/setup-buildx-action@v4
-        if: steps.original.outputs.reuse != 'true'
+        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
         id: builder
       - name: Build extension and both installers
-        if: steps.original.outputs.reuse != 'true'
+        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
         env:
-          PROJECT_VERSION: ${{ needs.prepare.outputs.docker_tag }}
+          PROJECT_VERSION: ${{ steps.compute.outputs.docker_tag }}
         run: python3 scripts/build.py --version "$PROJECT_VERSION" --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
       - name: Registry login
+        if: steps.compute.outputs.release_required == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Check publication prerequisites before staging
-        if: steps.original.outputs.completed != 'true'
+        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.completed != 'true'
         run: python3 scripts/publish.py --preflight-only --images .build/images.json --output .build/preflight-images.json
       - name: Retain original archives and corresponding sources
-        if: steps.original.outputs.reuse != 'true'
+        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/release/stage_release.py --tag '${{ needs.prepare.outputs.git_tag }}' --preflight .build/preflight-images.json
+        run: python3 scripts/release/stage_release.py --tag '${{ steps.compute.outputs.git_tag }}' --preflight .build/preflight-images.json
       - name: Make matching sources public before every binary push
-        if: steps.original.outputs.completed != 'true'
+        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.completed != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit '${{ needs.prepare.outputs.git_tag }}' --draft=false
+        run: gh release edit '${{ steps.compute.outputs.git_tag }}' --draft=false
       - name: Publish and require anonymous pull
+        if: steps.compute.outputs.release_required == 'true'
         run: |
           if [ '${{ steps.original.outputs.completed }}' = true ]; then
             python3 scripts/publish.py --verify-existing --images .build/images.json --output .build/verified-images.json
@@ -144,22 +148,24 @@ jobs:
           fi
           cp .build/release-images.json .build/approved-runtime-images.json
       - name: Generate release notes
+        if: steps.compute.outputs.release_required == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
           mkdir -p .github/tmp &&
           python3 scripts/release/generate_release_notes.py
           --repo "${GITHUB_REPOSITORY}"
-          --previous-tag "${{ needs.prepare.outputs.previous_tag }}"
-          --target "${{ github.event.pull_request.merge_commit_sha }}"
-          --pr-number "${{ github.event.pull_request.number }}"
+          --previous-tag "${{ steps.compute.outputs.previous_tag }}"
+          --target "${{ github.sha }}"
+          --pr-number "${{ needs.prepare.outputs.pr_number }}"
           --output .github/tmp/release-notes.md
 
       - name: Create or update GitHub Release
+        if: steps.compute.outputs.release_required == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.prepare.outputs.git_tag }}
-          target_commitish: ${{ github.event.pull_request.merge_commit_sha }}
+          tag_name: ${{ steps.compute.outputs.git_tag }}
+          target_commitish: ${{ github.sha }}
           body_path: .github/tmp/release-notes.md
           draft: false
           prerelease: false
