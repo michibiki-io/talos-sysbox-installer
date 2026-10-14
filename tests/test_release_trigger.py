@@ -116,6 +116,38 @@ class ReleaseVersionTests(unittest.TestCase):
             self.assertEqual(compute.compute_next_tag('', kind), 'v0.2.0')
         self.assertEqual(compute.compute_next_tag('v0.2.0', 'patch'), 'v0.2.1')
 
+    def test_out_of_order_release_stops_but_same_commit_recovery_is_allowed(self):
+        # Real git ancestry and lightweight/annotated tags, without changing
+        # the repository checkout or global git configuration.
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args):
+                return subprocess.check_output(['git', '-C', directory, *args], text=True).strip()
+            git('init', '-q', '-b', 'main')
+            git('config', 'user.name', 'Release Test')
+            git('config', 'user.email', 'release-test@example.invalid')
+            def commit(message):
+                git('commit', '-q', '--allow-empty', '-m', message)
+                return git('rev-parse', 'HEAD')
+            base = commit('fix: base')
+            git('tag', 'v0.2.0', base)
+            older = commit('feat: older merge')
+            newer = commit('fix: newer merge')
+            git('tag', '-a', 'v0.2.1', newer, '-m', 'newer released first')
+            env = {'GITHUB_REPOSITORY': '', 'GITHUB_TOKEN': '',
+                   'MERGE_COMMIT_SHA': older, 'PR_NUMBER': '', 'PR_TITLE': '',
+                   'PR_BASE_SHA': '', 'PR_HEAD_SHA': '', 'PR_COMMIT_COUNT': ''}
+            real_run = subprocess.run
+            def isolated_run(*args, **kwargs):
+                return real_run(*args, **dict(kwargs, cwd=directory))
+            with mock.patch.dict(os.environ, env), mock.patch.object(compute.subprocess, 'run', side_effect=isolated_run), mock.patch.object(compute, 'write_outputs') as write:
+                with self.assertRaisesRegex(RuntimeError, 'descendant.*already tagged v0.2.1'):
+                    compute.main()
+                write.assert_not_called()
+                git('tag', 'v0.3.0', older)
+                self.assertEqual(compute.main(), 0)
+                self.assertEqual(write.call_args.args[0]['git_tag'], 'v0.3.0')
+                self.assertEqual(write.call_args.args[0]['tag_exists'], 'true')
+
     def test_commit_messages_and_existing_tag_targets_remain_authoritative(self):
         env = {'GITHUB_REPOSITORY': '', 'GITHUB_TOKEN': '', 'MERGE_COMMIT_SHA': 'a'*40,
                'PR_NUMBER': '', 'PR_TITLE': 'feat: misleading title'}

@@ -276,6 +276,17 @@ def main() -> int:
                     f"computed tag {git_tag} already exists and points to {existing_target}, not {target_commit}"
                 )
             tag_exists = "true"
+        else:
+            # Prepare jobs may finish out of merge order. Never mint a new
+            # version for older code after a descendant has been tagged.
+            # Recovery of an existing tag on this exact commit remains valid.
+            target_commit = run_git("rev-parse", merge_sha)
+            containing_tags = run_git("tag", "--contains", target_commit, "--list", "v[0-9]*")
+            for tag in containing_tags.splitlines():
+                if SEMVER_RE.fullmatch(tag) and tag_commit(tag) != target_commit:
+                    raise RuntimeError(
+                        f"cannot create {git_tag}: descendant of {target_commit} already tagged {tag}"
+                    )
 
     write_outputs(
         {
