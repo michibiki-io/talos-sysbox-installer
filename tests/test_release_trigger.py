@@ -2,7 +2,6 @@ import copy
 import importlib.util
 import json
 import os
-import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -61,7 +60,7 @@ class ReleaseTriggerTests(unittest.TestCase):
     def test_other_events_and_nondefault_pushes_never_query_api(self):
         env = {'GITHUB_REPOSITORY': 'example/project', 'RELEASE_BRANCH': 'trunk',
                'GITHUB_SHA': 'a'*40, 'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/heads/trunk'}
-        for key, value in [('GITHUB_EVENT_NAME', 'pull_request'), ('GITHUB_REF', 'refs/heads/feature/test'),
+        for key, value in [('GITHUB_EVENT_NAME', 'pull_request'), ('GITHUB_REF', 'refs/heads/feature/test'), ('GITHUB_REF', 'refs/heads/TRUNK'),
                            ('GITHUB_REF', 'refs/tags/v1.0.0')]:
             with mock.patch.dict(os.environ, dict(env, **{key: value})), mock.patch.object(resolver, 'api') as api:
                 with self.assertRaises(RuntimeError): resolver.main()
@@ -93,12 +92,22 @@ class ReleaseTriggerTests(unittest.TestCase):
 
     def test_workflow_separates_feature_pushes_from_release_concurrency(self):
         workflow = (ROOT/'.github/workflows/release.yml').read_text()
-        group = re.search(r'^concurrency:\n  group: (.+)$', workflow, re.MULTILINE).group(1)
-        default = group.replace('${{ github.repository }}', 'example/project').replace('${{ github.ref }}', 'refs/heads/trunk')
-        feature = group.replace('${{ github.repository }}', 'example/project').replace('${{ github.ref }}', 'refs/heads/feature/test')
-        self.assertNotEqual(default, feature)
+        # Serialization is entered only after the case-sensitive Python/API gate.
+        # GitHub concurrency names and expression comparisons ignore case;
+        # grouping unconditionally by ref would collide for trunk vs TRUNK.
+        self.assertNotIn('\nconcurrency:', workflow)
+        publication = workflow.split('  publish:\n', 1)[1]
+        self.assertIn("needs.prepare.outputs.eligible == 'true'", publication)
+        self.assertIn('    concurrency:', publication)
+        self.assertIn('group: release-${{ github.repository }}-${{ github.event.repository.default_branch }}', publication)
+        self.assertIn('contents: read', workflow.split('  publish:\n', 1)[0])
         self.assertNotIn('pull_request_target:', workflow)
         self.assertIn("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", workflow)
+        # Compute/tag creation must be inside serialization to avoid stale versions.
+        self.assertNotIn('Compute release metadata', workflow.split('  publish:\n', 1)[0])
+        self.assertIn('Compute release metadata', publication)
+        self.assertIn('Create annotated git tag', publication)
+
 
 
 class ReleaseVersionTests(unittest.TestCase):

@@ -189,7 +189,7 @@ VMware functionality requires a separate authorized VMware target; verify the ag
 ### Release and licensing
 
 Release automation starts on pushes to the current default branch and requires an API-confirmed merged `feature/` PR whose merge commit exactly matches the pushed SHA. Direct pushes and other branches cannot publish; no `pull_request_target` policy exception is needed.
-Concurrency groups are separated by pushed ref so feature-branch pushes cannot replace a pending default-branch release. When there is no reachable version tag, the initial release version is `v0.2.0`. Release gating assumes trusted repository write collaborators; job conditions are not a security boundary against someone editing workflow files. Each push evaluates the merged PR at its tip SHA; combining multiple PR merges in one push is outside this release contract.
+Only API-confirmed release candidates enter the publication concurrency group; metadata calculation, tagging and publication are serialized together. Other pushes cannot replace a pending release, including case variants of the default-branch name. When there is no reachable version tag, the initial release version is `v0.2.0`. Release gating assumes trusted repository write collaborators; job conditions are not a security boundary against someone editing workflow files. Each push evaluates the merged PR at its tip SHA; combining multiple PR merges in one push is outside this release contract.
 It derives semver and release notes from individual commit subjects/bodies, including breaking-change markers, without using PR titles for classification.
 PR builds have read-only repository permissions and no publication credentials.
 Post-merge publication uses the existing GitHub Actions token and fails unless all three GHCR images are anonymously readable.
@@ -348,7 +348,7 @@ VMware の runtime 対応をうたう前に、承認された VMware 環境で a
 ### リリースとライセンス
 
 現在の既定ブランチへの push を起点とし、push の SHA と merge commit が一致するマージ済み `feature/` PR を API で確認してからリリースします。直接 push や他ブランチでは公開せず、`pull_request_target` のポリシー例外は不要です。
-concurrency group は push された ref ごとに分け、feature branch の push が待機中の既定ブランチの release を置き換えないようにします。到達可能な version tag がない場合の初期 release version は `v0.2.0` です。 リリースの起動条件は repository への write 権限を持つ協力者を信頼する前提で、workflow 自体を編集できる人に対するセキュリティ境界ではありません。各 push の先端 SHA に対応するマージ済み PR を評価し、複数 PR の merge を一度の push にまとめる運用は、このリリース契約の対象外です。
+API で確認した release 候補だけを公開 job の concurrency group に入れ、version の計算・tag の作成・公開をまとめて直列化します。他の push は、既定 branch 名の大文字・小文字が異なる場合も含め、待機中の release を置き換えません。到達可能な version tag がない場合の初期 release version は `v0.2.0` です。 リリースの起動条件は repository への write 権限を持つ協力者を信頼する前提で、workflow 自体を編集できる人に対するセキュリティ境界ではありません。各 push の先端 SHA に対応するマージ済み PR を評価し、複数 PR の merge を一度の push にまとめる運用は、このリリース契約の対象外です。
 semantic version とノートは各 commit の subject/body と breaking-change marker から生成し、PR title を判定に使いません。
 PR build は read-only 権限で、公開用資格情報を渡しません。
 マージ後の公開は既存の GitHub Actions token を使い、3つの GHCR イメージを匿名で取得できることを確認します。
