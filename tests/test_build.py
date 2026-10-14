@@ -40,6 +40,7 @@ def load_release(name):
 
 stage=load_release('stage_release')
 reuse=load_release('reuse_inputs')
+probe_build=load('build_validation_image')
 
 class ProbePackageTests(unittest.TestCase):
     # Observed pinned Ubuntu base and signed 20261001 snapshot metadata.
@@ -356,6 +357,69 @@ class BuildTests(unittest.TestCase):
         (directory/'sources.tar.gz').write_bytes(b'sources')
         (directory/'evidence').mkdir();(directory/'evidence/build-metadata.json').write_text('{}')
         return inputs
+
+    def test_offline_assets_validate_four_originals_without_remote_calls(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run, mock.patch.object(stage.subprocess, 'check_output') as output:
+                assets = stage.validate_assets(inputs, root)
+                self.assertEqual([p.name for p in assets], ['sources.tar.gz', 'build-metadata.json', *stage.ARCHIVES, 'probe-image.tar'])
+                (root/'probe-image.tar').write_bytes(b'corrupt')
+                with self.assertRaisesRegex(RuntimeError, 'checksum'):
+                    stage.validate_assets(inputs, root)
+                lookup.assert_not_called(); run.assert_not_called(); output.assert_not_called()
+
+    def test_offline_assets_enforce_strict_size_boundary_for_every_asset(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            assets = stage.validate_assets(inputs, root)
+            original_stat = Path.stat
+            for target in assets:
+                for size in (2*1024**3 - 1, 2*1024**3, 2*1024**3 + 1):
+                    def stat(path, *args, **kwargs):
+                        result = original_stat(path, *args, **kwargs)
+                        if path == target:
+                            fields = list(result); fields[6] = size
+                            return os.stat_result(fields)
+                        return result
+                    with self.subTest(asset=target.name, size=size), mock.patch.object(Path, 'stat', stat), mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run:
+                        if size < 2*1024**3:
+                            self.assertEqual(stage.validate_assets(inputs, root), assets)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, 'Missing or oversized'):
+                                stage.validate_assets(inputs, root)
+                        lookup.assert_not_called(); run.assert_not_called()
+            for target in assets[:2]:
+                content = target.read_bytes(); target.unlink()
+                with self.subTest(missing=target.name), self.assertRaisesRegex(RuntimeError, 'Missing or oversized'):
+                    stage.validate_assets(inputs, root)
+                target.write_bytes(content)
+
+    def test_stage_uses_shared_asset_gate_before_remote_operations(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'validate_assets', side_effect=RuntimeError('asset gate')) as gate, mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'asset gate'):
+                    stage.stage('example/repo', 'v0.1.0', root, {'preflight': True, 'inputs': inputs})
+                gate.assert_called_once_with(inputs, root)
+                lookup.assert_not_called(); run.assert_not_called()
+
+    def test_probe_export_requires_one_actual_rootfs_layer(self):
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            for manifest_count, config_count in ((1, 1), (2, 2), (1, 2), (2, 1), (0, 0)):
+                with tarfile.open(archive, 'w') as tf:
+                    for name, value in [('manifest.json', [{'Config': 'config.json', 'Layers': ['layer.tar']*manifest_count}]),
+                                        ('config.json', {'rootfs': {'diff_ids': ['sha256:layer']*config_count}})]:
+                        data = json.dumps(value).encode()
+                        member = tarfile.TarInfo(name); member.size = len(data)
+                        tf.addfile(member, io.BytesIO(data))
+                with self.subTest(manifest=manifest_count, config=config_count):
+                    if manifest_count == config_count == 1:
+                        self.assertEqual(probe_build.verify_flattened_archive(archive), 1)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'exactly one rootfs layer'):
+                            probe_build.verify_flattened_archive(archive)
 
     def test_preflight_does_not_push_or_check_anonymous_access(self):
         with tempfile.TemporaryDirectory() as d:

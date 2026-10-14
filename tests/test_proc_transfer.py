@@ -87,10 +87,15 @@ class Integration(unittest.TestCase):
                 if failure == 'hash': manifest['source_sha256']['helper/proc-mount-helper.c'] = 'b' * 64
                 if failure == 'schema': manifest['schema_version'] = 2
                 if failure == 'generator': manifest['generator'] = 'future'
-                if failure == 'scope': (root / 'patches/proc-transfer.patch').write_text('+++ b/sysbox-mgr/main.go')
+                if failure == 'scope':
+                    patch = root / 'patches/proc-transfer.patch'
+                    patch.write_text(patch.read_text().replace('sysbox-fs/nsenter/event.go', 'sysbox-mgr/main.go'))
                 if failure == 'helper': (root / 'helper/proc-mount-helper.c').write_text('unsupported')
+                if failure in ('scope', 'helper'):
+                    manifest['source_sha256'] = {name: p.sha256(root / name) for name in manifest['source_sha256']}
                 (root / 'build/sources.lock.json').write_text(json.dumps(manifest))
-                with self.assertRaises(ValueError): p.verify_manifest(root, self.versions)
+                expected = {'scope': '^unsupported patch scope$', 'helper': '^unsupported helper contract$'}.get(failure, '.')
+                with self.assertRaisesRegex(ValueError, expected): p.verify_manifest(root, self.versions)
 
     def test_full_inventory_detects_changed_missing_and_extra_files(self):
         for failure in ('changed', 'missing', 'extra'):

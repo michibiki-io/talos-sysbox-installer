@@ -15,6 +15,17 @@ sys.path.insert(0, str(ROOT / 'build'))
 import proc_transfer
 
 
+def verify_flattened_archive(archive):
+    """Reject inherited layers in the actual exported distribution artifact."""
+    with tarfile.open(archive) as tf:
+        entry, = json.load(tf.extractfile('manifest.json'))
+        config = json.load(tf.extractfile(entry['Config']))
+    count = len(config['rootfs']['diff_ids'])
+    if count != 1 or len(entry['Layers']) != 1:
+        raise RuntimeError('probe image must contain exactly one rootfs layer')
+    return count
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output', type=Path, required=True)
@@ -70,6 +81,7 @@ def main():
         raise RuntimeError('probe image must default to UID/GID 1001')
     archive = out / 'probe-image.tar'
     build.run(['docker', 'save', '-o', str(archive), image])
+    rootfs_layer_count = verify_flattened_archive(archive)
     with tempfile.TemporaryDirectory(prefix='probe-oci-', dir=out) as work:
         layout = Path(work) / 'layout'
         oci_digest = build.docker_to_oci(archive, layout)
@@ -83,6 +95,7 @@ def main():
         'local_tag': image, 'oci_digest': oci_digest, 'config_digest': build.archive_config_digest(archive),
         'archive': 'probe-oci.tar', 'archive_sha256': build.file_sha256(out / 'probe-oci.tar'),
         'docker_archive': archive.name, 'docker_archive_sha256': build.file_sha256(archive), 'anonymous_pull_verified': False,
+        'rootfs_layer_count': rootfs_layer_count,
         'distribution': 'local-archive-import-only', 'architecture': 'amd64', 'uid': 1001, 'gid': 1001,
         'bubblewrap': '0.12.0', 'launcher_python_minimum': '3.12'},
         'proc_transfer_bootstrap': lock['test_images']['busybox']},

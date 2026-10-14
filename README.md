@@ -340,7 +340,7 @@ Docker networking と必要な kernel 機能とリソースがある環境で、
 実 Talos 検証は、新しい installer を導入済みで runtime 登録済みの、明示的に許可された対象で実行します。
 runner は更新や再起動を行いません。
 kubeconfig、context、期待する node、`real-talos`、結果ファイル、build metadata、Talos API 接続設定を明示します。
-検証 namespace を作る前に、実ノードの Sysbox binary と supervisor を Talos API で読み、今回の SHA-256 と一致することを確認します。
+検証 namespace を作る前に、実ノードの Sysbox binary 3 種、production proc helper、両 supervisor を Talos API で読み、今回の SHA-256 と一致することを確認します。
 記録したソース入力と checkout が異なる成果物も拒否し、過去の prototype の成功を変更後のビルドへ流用できないようにします。
 直接 Docker、特権子コンテナ、kind Ready、Helm rollout、Service DNS/TCP、container ID が変わる再作成後の子コンテナ、通常 runtime の Pod を確認します。
 一意の専用 namespace を作り、失敗時も削除します。

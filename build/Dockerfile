@@ -48,7 +48,7 @@ COPY --from=assemble /out/manifest.yaml /manifest.yaml
 LABEL org.opencontainers.image.source="https://github.com/michibiki-io/talos-sysbox-installer"
 
 # Separate validation image; no checkpoint binary or launcher enters extension.
-FROM dependencies AS validation-probe
+FROM dependencies AS validation-probe-build
 RUN sh /work/apt_retry.sh install -y --no-install-recommends meson ninja-build libcap-dev util-linux procps
 COPY --from=assemble /out/validation/ /opt/proc-transfer/
 COPY --from=assemble /out/build-metadata.json /opt/production-build-metadata.json
@@ -60,6 +60,11 @@ COPY build/validation_image.py build/validation_packages.py /work/
 RUN python3 /work/validation_image.py && rm -rf /usr/local/go && \
     groupadd --gid 1001 probe && useradd --uid 1001 --gid 1001 --create-home probe && \
     chmod -R a+rX /opt/proc-transfer && chmod 755 /opt/proc-transfer/ctr
+# Flatten only the final effective filesystem: replaced packages and removed
+# SDK files in builder layers must never enter the published probe.
+FROM scratch AS validation-probe
+COPY --from=validation-probe-build / /
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 USER 1001:1001
 WORKDIR /home/probe
 CMD ["/bin/sleep", "infinity"]
@@ -75,6 +80,5 @@ COPY --from=validation-probe /opt/validation-licenses/ /licenses/
 COPY --from=validation-probe /opt/proc-transfer/image-versions.json /image-versions.json
 COPY --from=assemble /out/build-metadata.json /production-build-metadata.json
 COPY --from=assemble /out/validation/artifacts.lock.json /artifacts.lock.json
-# The validation image's inherited builder layers also carry the Go toolchain.
-# Retain its matching source and notices in the release source offering.
+# Retain matching Go source and notices for static ctr and compiled software.
 COPY --from=supervisor /usr/local/go/ /go-toolchain/
