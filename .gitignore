@@ -1,0 +1,11 @@
+/.build/
+/.validation/
+/.tmp/e2e/
+/test/e2e/.env
+/test/e2e/.state/
+/test/e2e/results/
+__pycache__/
+*.pyc
+*.kubeconfig
+talosconfig
+machineconfig*.yaml

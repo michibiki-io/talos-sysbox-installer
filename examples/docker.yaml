@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sysbox-docker
+spec:
+  runtimeClassName: sysbox-runc
+  hostUsers: false
+  automountServiceAccountToken: false
+  restartPolicy: Always
+  containers:
+    - name: docker
+      image: docker.io/library/docker:27.5.1-dind
+      command: [sh, -ceu]
+      args:
+        - exec dockerd --host=unix:///run/docker.sock --storage-driver=overlay2 --exec-opt native.cgroupdriver=cgroupfs
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        privileged: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: "2"
+          memory: 4Gi

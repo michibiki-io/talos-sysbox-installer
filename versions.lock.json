@@ -1,0 +1,95 @@
+{
+  "talos": "1.12.6",
+  "sysbox": "0.7.1",
+  "architecture": "amd64",
+  "ubuntu": "docker.io/library/ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+  "go": "docker.io/library/golang:1.26.2@sha256:7095ad02810845fa35d1fb090b8e57dd20dce4ca36b29b42951802350d2ec90e",
+  "apt_snapshot": "20261001T000000Z",
+  "sysbox_package": {
+    "url": "https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb",
+    "sha256": "9d6d5484f980d0a17f86c492c1262015c2afb66280bdb97215b79fde6a0261c5"
+  },
+  "sources": {
+    "sysbox": {
+      "url": "https://github.com/nestybox/sysbox/archive/refs/tags/v0.7.1.tar.gz",
+      "sha256": "1d866dcf6bb5fecd16e29cb31384943d0849518edb46a077d913cdfa90fb5a82"
+    },
+    "containerd": {
+      "url": "https://github.com/containerd/containerd/archive/refs/tags/v2.1.6.tar.gz",
+      "sha256": "9b13537e5d61b9cf301295a807751447cc7c86fd79bb37ac5630455013d353a5"
+    }
+  },
+  "catalogue": "ghcr.io/siderolabs/extensions:v1.12.6@sha256:293505847848bb3cb13548a8692cdb414002e16209f5166786cc2fcdb3e765a0",
+  "imager": "ghcr.io/siderolabs/imager:v1.12.6@sha256:15cf821fa546911ed86286a96ed588ce8662cce31321d1b82eea6029d5be8c64",
+  "base_installer": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:9c8b9888993b30c3547879fdcee138fa9a25503b41ec2fdc5ae3671946f1b5a3",
+  "extensions": {
+    "iscsi-tools": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
+    "util-linux-tools": "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb",
+    "vmtoolsd-guest-agent": "ghcr.io/siderolabs/vmtoolsd-guest-agent:v1.5.0@sha256:fa82f581be4f277252b222b84e112dad4eea97eccf974808179d6c501c14fd46"
+  },
+  "standard_extensions": [
+    "iscsi-tools",
+    "util-linux-tools"
+  ],
+  "test_images": {
+    "docker": "docker:27.5.1-dind@sha256:f649ef046008ca7f926a2571c32b0ac22e5c59eb61b959617f9acc2a4c638cf5",
+    "busybox": "busybox:1.36@sha256:b7f3d86d6e84fc17718c48bcde1450807faa2d56704205c697b4bd5df7b9e29f",
+    "kind_node": "kindest/node:v1.35.0@sha256:986401fce0e567a9860075ba9df8c8459bd99a35f79024d8a682773fb40f0753",
+    "talos_docker": "ghcr.io/siderolabs/talos:v1.12.6@sha256:dfd2566ef18636be986fd53cd174009dd48bfb58f81ebf7f98afd71b6da991b9"
+  },
+  "test_tools": {
+    "kubectl": {
+      "url": "https://dl.k8s.io/release/v1.35.2/bin/linux/amd64/kubectl",
+      "sha256": "924eb50779153f20cb668117d141440b95df2f325a64452d78dff9469145e277"
+    },
+    "kind": {
+      "url": "https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64",
+      "sha256": "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa"
+    },
+    "helm": {
+      "url": "https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz",
+      "sha256": "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496"
+    },
+    "talosctl": {
+      "url": "https://github.com/siderolabs/talos/releases/download/v1.13.5/talosctl-linux-amd64",
+      "sha256": "cb12209727c0c4d57d74c0595f34d441ba491421e1d3c8a5142ed91028a20232"
+    }
+  },
+  "sysbox_components": {
+    "sysbox-runc": {
+      "url": "https://github.com/nestybox/sysbox-runc/archive/081856cc5d17e7095f066b08d0eca6bb0b515c47.tar.gz",
+      "sha256": "1440ee7276dc20f2397f485a6ae987c0fd62270a209e335bd3c1e68db676b704",
+      "commit": "081856cc5d17e7095f066b08d0eca6bb0b515c47"
+    },
+    "sysbox-mgr": {
+      "url": "https://github.com/nestybox/sysbox-mgr/archive/2d45af01bcfd8641e6641f76104c6003bf501cd7.tar.gz",
+      "sha256": "8c39b638d0051b61eea0a17972787259ce0597b1ce4cfc1fca75d3ee4826ecf9",
+      "commit": "2d45af01bcfd8641e6641f76104c6003bf501cd7"
+    },
+    "sysbox-fs": {
+      "url": "https://github.com/nestybox/sysbox-fs/archive/c3d2ebc65102e32e74e383675f03b45556326888.tar.gz",
+      "sha256": "7395b8714cc2c035e4bc1f0e4187fc02ffe614881bef9de888de60444441f580",
+      "commit": "c3d2ebc65102e32e74e383675f03b45556326888"
+    },
+    "sysbox-ipc": {
+      "url": "https://github.com/nestybox/sysbox-ipc/archive/f05151f4b4c1df63d7fd241577ca032905c1bd0e.tar.gz",
+      "sha256": "acb5eaeb9eba9ab603bb4135230fd4956477c1bd30639799ffe9f871daacd177",
+      "commit": "f05151f4b4c1df63d7fd241577ca032905c1bd0e"
+    },
+    "sysbox-libs": {
+      "url": "https://github.com/nestybox/sysbox-libs/archive/cacac19395528afa42b467a980b05d8d1c6d646c.tar.gz",
+      "sha256": "5555e8989539d4bf04ad7ba276001ad85a4aad3a71f06c1fea75b3ff374924e3",
+      "commit": "cacac19395528afa42b467a980b05d8d1c6d646c"
+    },
+    "sysbox-fs/bazil": {
+      "url": "https://github.com/nestybox/fuse/archive/5ce319439091b08f33b149cb2482039f1b0a24fe.tar.gz",
+      "sha256": "91e00b9d6626dd8988683bc67048cfa6d2a62bfdf3295749eac9bd30409863b6",
+      "commit": "5ce319439091b08f33b149cb2482039f1b0a24fe"
+    }
+  },
+  "protobuf_generator": {
+    "version": "1.3.2",
+    "url": "https://proxy.golang.org/github.com/golang/protobuf/@v/v1.3.2.zip",
+    "sha256": "a004ba3acb85e012cb9e468e1d445a81cfeeb4b4db7e9802f30aa500a8341851"
+  }
+}
