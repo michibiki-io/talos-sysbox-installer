@@ -200,7 +200,8 @@ def build_validation(integration, source_root, env):
     shutil.copy2(integration / 'tests/unit/lifecycle.c', seccomp / 'testdata/proc_lifecycle.c')
     checks = [(['go', 'test', '-v', '-tags', 'netgo osusergo', './seccomp', '-run',
                 '^TestProc(PolicyBeforeNestedTransfer|RequesterThreadPidfd|TransferInvalidNotificationDoesNotLaunch|TransferRealNotification)$', '-count=1'], source_root / 'sysbox-fs', 180),
-              (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_lifecycle.py', '-v'], integration, 120)]
+              (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_lifecycle.py', '-v'], integration, 120),
+              (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_proc_verifier.py', '-v'], integration, 120)]
     rejection = subprocess.run(['/work/rebuilt/proc-mount-helper', '0', '0', '0'],
                                close_fds=True, capture_output=True, timeout=5)
     if rejection.returncode == 0 or b'proc-transfer:' not in rejection.stderr:

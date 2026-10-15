@@ -108,14 +108,19 @@ def verify_backend(backend, metadata, host, proc_root=Path('/proc')):
         raise ValueError('fs backend must join node PID namespace')
 
 
+def trusted_host_namespaces(proc_root=Path('/proc')):
+    host = {name: os.readlink(proc_root / '1/ns' / name) for name in ('pid', 'user')}
+    if any(os.readlink(proc_root / 'self/ns' / name) != host[name] for name in host):
+        raise ValueError('launcher must independently observe node PID and initial User namespaces')
+    if (proc_root / 'self/uid_map').read_text().split() != ['0', '0', '4294967295']:
+        raise ValueError('launcher requires the initial User namespace')
+    return host
+
+
 def run(args):
     if sys.version_info < (3, 12) or os.geteuid() != 0 or os.uname().machine != 'x86_64':
         raise ValueError('requires trusted amd64 root and Python >=3.12')
-    host = {name: os.readlink('/proc/1/ns/' + name) for name in ('pid', 'user')}
-    if any(os.readlink('/proc/self/ns/' + name) != host[name] for name in host):
-        raise ValueError('launcher must independently observe node PID and initial User namespaces')
-    if Path('/proc/self/uid_map').read_text().split() != ['0', '0', '4294967295']:
-        raise ValueError('launcher requires the initial User namespace')
+    host = trusted_host_namespaces()
     artifacts = verify_artifacts(BASE)
     image_lock = json.loads(args.image_lock.read_text())
     if digest(BASE / 'artifacts.lock.json') != image_lock['validation_artifacts_lock_sha256']:
@@ -163,7 +168,7 @@ def run(args):
     for daemon in ('sysbox-mgr', 'sysbox-fs'):
         if digest(local / 'lib/containers' / daemon / 'supervisor') != metadata['supervisor_sha256']:
             raise ValueError('installed supervisor mismatch')
-    backend = task_pid('/system/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
+    backend = task_pid('/proc/1/root/system/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
     verify_backend(backend, metadata, host)
     outer = task_pid('/run/containerd/containerd.sock', 'k8s.io', args.container)
     pin = os.pidfd_open(outer)

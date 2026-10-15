@@ -3,6 +3,8 @@
 import os
 import re
 import signal
+from pathlib import Path
+import tempfile
 import subprocess
 import sys
 import uuid
@@ -13,20 +15,30 @@ def execute(arguments, container, timeout=120):
         raise ValueError('invalid owned probe or deadline')
     prefix = ['/opt/proc-transfer/ctr', '--address=/run/containerd/containerd.sock', '--namespace=k8s.io', 'tasks']
     owned = 'proc-transfer-' + uuid.uuid4().hex
-    command = [*prefix, 'exec', '--exec-id=' + owned, '--user=1001:1001', container, *arguments]
-    try:
-        return subprocess.run(command, timeout=timeout).returncode
-    except BaseException:
-        # ctr client death alone does not stop the server-side process. This
-        # pinned ctr's delete --force loads/deletes exactly this exec ID and
-        # reports its exit code (137 after SIGKILL), never deletes the task.
+    # Ignore TMPDIR: storage belongs to the launcher Pod, never a host mount.
+    # One private directory per bounded exec; ctr creates only its IO FIFOs.
+    with tempfile.TemporaryDirectory(prefix='proc-transfer-fifo-', dir='/tmp') as private:
+        local = Path(private)
+        local.chmod(0o700)
+        # hostPID makes our Python PID meaningful to the daemon. Use this same
+        # spelling for ctr and shim; a plain Pod /tmp path names different files.
+        visible = Path('/proc') / str(os.getpid()) / 'root' / local.relative_to('/')
+        if not local.samefile(visible) or local.stat().st_mode & 0o777 != 0o700:
+            raise ValueError('private FIFO directory identity/mode mismatch')
+        command = [*prefix, 'exec', '--fifo-dir=' + str(visible),
+                   '--exec-id=' + owned, '--user=1001:1001', container, *arguments]
         try:
-            cleanup = subprocess.run([*prefix, 'delete', '--force', '--exec-id=' + owned, container], timeout=15)
-            if cleanup.returncode not in (0, 137):
-                print('Owned exec removal not proven; owned namespace cleanup required.', file=sys.stderr)
+            return subprocess.run(command, timeout=timeout).returncode
         except BaseException:
-            print('Owned exec removal failed; owned namespace cleanup required.', file=sys.stderr)
-        raise
+            # ctr death does not stop its server exec. Delete exactly our ID
+            # before TemporaryDirectory removes storage, including on failure.
+            try:
+                cleanup = subprocess.run([*prefix, 'delete', '--force', '--exec-id=' + owned, container], timeout=15)
+                if cleanup.returncode not in (0, 137):
+                    print('Owned exec removal not proven; owned namespace cleanup required.', file=sys.stderr)
+            except BaseException:
+                print('Owned exec removal failed; owned namespace cleanup required.', file=sys.stderr)
+            raise
 
 
 def main():

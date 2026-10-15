@@ -64,9 +64,10 @@ class Integration(unittest.TestCase):
     def fixture(self, work):
         root = Path(work)
         manifest = {'schema_version': 1, 'upstream_tag': 'v0.7.1',
-                    'components': {name: {'repository': 'https://github.com/nestybox/' + component + '.git',
+                    'components': {name: {'repository': 'https://github.com/nestybox/' + ('fuse' if name == 'fuse' else component) + '.git',
                           'revision': (self.versions['sources']['sysbox'] if name == 'root' else self.versions['sysbox_components'][component])['commit']}
-                         for name, component in p.COMPONENTS.items()},
+                         for name, component in {'root': 'sysbox', 'fs': 'sysbox-fs', 'runc': 'sysbox-runc',
+                           'ipc': 'sysbox-ipc', 'libs': 'sysbox-libs', 'fuse': 'sysbox-fs/bazil'}.items()},
                     'builder': 'golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e',
                     'generator': 'github.com/golang/protobuf/protoc-gen-go@v1.3.5', 'source_sha256': {}}
         for name in ('build', 'helper', 'patches'): (root / name).mkdir()
@@ -79,10 +80,19 @@ class Integration(unittest.TestCase):
         return manifest
 
     def test_manifest_revisions_hashes_contract_and_patch_scope(self):
-        for failure in ('revision', 'hash', 'schema', 'generator', 'scope', 'helper'):
+        for failure in ('revision', 'hash', 'schema', 'generator', 'builder', 'scope', 'helper',
+                        'fuse-revision', 'fuse-repository', 'fuse-fields', 'missing', 'extra', 'unknown', 'invalid-hash'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
                 root = Path(work); manifest = self.fixture(work)
                 p.verify_manifest(root, self.versions)
+                if failure == 'fuse-revision': manifest['components']['fuse']['revision'] = 'a' * 40
+                if failure == 'fuse-fields': manifest['components']['fuse']['optional'] = True
+                if failure == 'invalid-hash': manifest['source_sha256']['helper/proc-mount-helper.c'] = 'invalid'
+                if failure == 'fuse-repository': manifest['components']['fuse']['repository'] = 'https://github.com/other/fuse.git'
+                if failure == 'missing': del manifest['components']['fuse']
+                if failure == 'extra': manifest['components']['mgr'] = manifest['components']['fs']
+                if failure == 'unknown': manifest['components']['future'] = manifest['components'].pop('fuse')
+                if failure == 'builder': manifest['builder'] = 'future'
                 if failure == 'revision': manifest['components']['fs']['revision'] = 'a' * 40
                 if failure == 'hash': manifest['source_sha256']['helper/proc-mount-helper.c'] = 'b' * 64
                 if failure == 'schema': manifest['schema_version'] = 2
@@ -96,6 +106,104 @@ class Integration(unittest.TestCase):
                 (root / 'build/sources.lock.json').write_text(json.dumps(manifest))
                 expected = {'scope': '^unsupported patch scope$', 'helper': '^unsupported helper contract$'}.get(failure, '.')
                 with self.assertRaisesRegex(ValueError, expected): p.verify_manifest(root, self.versions)
+
+    def test_candidate_updater_checks_baseline_actual_bytes_and_preserves_full_inventory(self):
+        updater = OperatorContracts.module('updater', 'scripts/update_proc_transfer.py')
+        for change in ('tests-only', 'helper', 'patch', 'missing-required', 'fuse-pin', 'source-hash', 'contract'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as work:
+                root = Path(work); source = root / 'source'; source.mkdir()
+                manifest = self.fixture(source)
+                for name in p.REQUIRED - set(p.inventory(source)):
+                    path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture')
+                baseline = copy.deepcopy(self.lock)
+                baseline['input_sha256'] = p.inventory(source)
+                project = root / 'project'; (project / 'build').mkdir(parents=True)
+                (project / 'build/proc-transfer.lock.json').write_text(json.dumps(baseline))
+                versions = root / 'versions.json'; versions.write_text(json.dumps(self.versions))
+                # Change real bytes AND refresh upstream hashes: old updater
+                # accepted this production drift. Baseline must still reject it.
+                target = {'helper': 'helper/proc-mount-helper.c', 'patch': 'patches/proc-transfer.patch',
+                          'tests-only': 'tests/runtime/verify.c', 'missing-required': 'tests/runtime/verify.c',
+                          'fuse-pin': 'tests/runtime/verify.c', 'source-hash': 'tests/runtime/verify.c',
+                          'contract': 'tests/runtime/verify.c'}[change]
+                if change == 'missing-required': (source / target).unlink()
+                else: (source / target).write_text((source / target).read_text() + '\n/* refreshed */')
+                for name in manifest['source_sha256']: manifest['source_sha256'][name] = p.sha256(source / name)
+                if change == 'fuse-pin': manifest['components']['fuse']['revision'] = 'f'*40
+                if change == 'source-hash': manifest['source_sha256']['helper/proc-mount-helper.c'] = 'f'*64
+                if change == 'contract': manifest['builder'] = 'future'
+                (source / 'build/sources.lock.json').write_text(json.dumps(manifest))
+                # Unused upstream sysfs files remain inventoried, never executed.
+                (source / 'helper/sysfs-mount-helper.c').write_text('unused')
+                archive = io.BytesIO()
+                with tarfile.open(fileobj=archive, mode='w:gz') as tf: tf.add(source, arcname='upstream')
+                output = root / 'candidate.json'; revision = 'a' * 40
+                with mock.patch.object(updater, 'ROOT', project), \
+                     mock.patch.object(sys, 'argv', ['update', '--revision', revision, '--output', str(output), '--versions', str(versions)]), \
+                     mock.patch.object(updater.urllib.request, 'urlopen', return_value=io.BytesIO(archive.getvalue())) as request:
+                    if change == 'tests-only':
+                        updater.main()
+                        candidate = p.load_lock(output)
+                        self.assertEqual(candidate['input_sha256'], p.inventory(source))
+                        self.assertEqual(candidate['sha256'], hashlib.sha256(archive.getvalue()).hexdigest())
+                        for name in p.PRODUCTION_INPUTS:
+                            self.assertEqual(candidate['input_sha256'][name], baseline['input_sha256'][name])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'production input|required inputs|component revision|manifest hash|build contract'): updater.main()
+                        self.assertFalse(output.exists())
+                    request.assert_called_once_with(p.archive_url(revision), timeout=120)
+                self.assertEqual(json.loads((project / 'build/proc-transfer.lock.json').read_text()), baseline)
+
+    def test_approved_production_inputs_remain_previous_reviewed_baseline(self):
+        expected = {'helper/proc-mount-helper.c': '78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208',
+                    'patches/proc-transfer.patch': 'd7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838'}
+        self.assertEqual({name: self.lock['input_sha256'][name] for name in expected}, expected)
+
+
+    def test_fixed_builder_selects_proc_regressions_and_inventories_without_upstream_recipe(self):
+        import ast
+        import shutil
+        from types import SimpleNamespace
+        # Load only this function: importing assemble would read /work inputs.
+        tree = ast.parse((ROOT / 'build/assemble.py').read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'build_validation')
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); source = root / 'source'; source.mkdir(); self.fixture(source)
+            for name in p.REQUIRED - set(p.inventory(source)):
+                path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture')
+            (source / 'tests/runtime/sysfs-unused.py').write_text('raise RuntimeError("must not execute")')
+            fs = root / 'components/sysbox-fs/seccomp'; fs.mkdir(parents=True)
+            def copy(source_path, destination):
+                source_path = Path(source_path)
+                if str(source_path).startswith('/work/project/'):
+                    source_path = ROOT / source_path.relative_to('/work/project')
+                if str(source_path) == '/work/ctr': Path(destination).write_bytes(b'fixed ctr')
+                else: shutil.copy2(source_path, destination)
+            commands = []
+            def command(args, **kwargs):
+                commands.append((args, kwargs))
+                if args[0] == 'cc': Path(args[-1]).write_bytes(b'checkpoint tool')
+                return subprocess.CompletedProcess(args, 1 if args[0].endswith('proc-mount-helper') else 0,
+                                                   stdout='', stderr=b'proc-transfer:' if args[0].endswith('proc-mount-helper') else '')
+            namespace = {'OUT': root, 'Path': lambda value: ROOT / Path(value).relative_to('/work/project'),
+                         'proc_transfer': p, 'integration_record': {'lock': self.lock},
+                         'stable_json': json.dumps, 'subprocess': SimpleNamespace(run=command),
+                         'shutil': SimpleNamespace(copy2=copy, copytree=shutil.copytree)}
+            exec(compile(ast.Module(body=[function], type_ignores=[]), 'build/assemble.py', 'exec'), namespace)
+            namespace['build_validation'](source, root / 'components', {'GOFLAGS': '-mod=readonly'})
+            python_checks = [args for args, _ in commands if args[0] == 'python3']
+            self.assertEqual([args[args.index('-p')+1] for args in python_checks],
+                             ['test_lifecycle.py', 'test_proc_verifier.py'])
+            self.assertEqual(len(commands), 6)  # Two checkpoint compiles, rejection and three check suites.
+            for args, kwargs in commands:
+                self.assertFalse(any('sysfs' in value or value.endswith('scripts/build.py') for value in args))
+            record = json.loads((root / 'validation/artifacts.lock.json').read_text())
+            self.assertEqual(record['artifact_sha256']['runtime/sysfs-unused.py'], p.sha256(source / 'tests/runtime/sysfs-unused.py'))
+            self.assertEqual(record['revision'], self.lock['revision'])
+            self.assertEqual(record['source_lock_sha256'], p.sha256(ROOT / 'build/proc-transfer.lock.json'))
+            results = json.loads((root / 'validation/upstream-results.json').read_text())
+            self.assertEqual(len(results), 4)
+            self.assertTrue(all(result['status'] == 'passed' for result in results))
 
     def test_full_inventory_detects_changed_missing_and_extra_files(self):
         for failure in ('changed', 'missing', 'extra'):
@@ -228,6 +336,10 @@ class OperatorContracts(unittest.TestCase):
             self.assertEqual(spec['containers'][0]['imagePullPolicy'], 'Never')
             if spec is trusted: self.assertNotIn('seccompProfile', spec['containers'][0]['securityContext'])
             self.assertFalse(spec['automountServiceAccountToken'])
+        self.assertEqual({v['hostPath']['path'] for v in trusted['volumes']}, {'/usr/local', '/run/containerd'})
+        self.assertEqual({v['mountPath'] for v in trusted['containers'][0]['volumeMounts']}, {'/usr/local', '/run/containerd'})
+        self.assertTrue(all(v['readOnly'] for v in trusted['containers'][0]['volumeMounts']))
+        self.assertNotIn('volumes', actual)
         lock['test_images']['proc_transfer_probe']['bubblewrap'] = '0.9.0'
         with self.assertRaises(ValueError): operator.render(lock, 'authorized-node', 'owned-namespace', 'a' * 32)
 
@@ -278,6 +390,179 @@ class OperatorContracts(unittest.TestCase):
         for key, value in [('anonymous_pull_verified', False), ('image', probe['image'].replace('a'*64, 'b'*64))]:
             changed = copy.deepcopy(lock); changed['test_images']['proc_transfer_probe'][key] = value
             with self.assertRaises(ValueError): operator.render(changed, 'approved', 'owned', 'a'*32)
+
+    def test_node_namespace_gate_is_independent_and_fails_before_socket_query(self):
+        launcher = self.module('namespace_launcher', 'build/runtime_launcher.py')
+        with tempfile.TemporaryDirectory() as work:
+            proc = Path(work)
+            for name in ('1', 'self'): (proc / name / 'ns').mkdir(parents=True)
+            for name, identity in (('pid', 'pid:[1]'), ('user', 'user:[2]')):
+                for who in ('1', 'self'): (proc / who / 'ns' / name).symlink_to(identity)
+            mapping = proc / 'self/uid_map'; mapping.write_text('0 0 4294967295\n')
+            self.assertEqual(launcher.trusted_host_namespaces(proc), {'pid': 'pid:[1]', 'user': 'user:[2]'})
+            for name in ('pid', 'user'):
+                link = proc / 'self/ns' / name; original = link.readlink()
+                link.unlink(); link.symlink_to(name + ':[9]')
+                with self.assertRaisesRegex(ValueError, 'independently observe'): launcher.trusted_host_namespaces(proc)
+                link.unlink(); link.symlink_to(original)
+            mapping.write_text('0 100000 65536\n')
+            with self.assertRaisesRegex(ValueError, 'initial User'): launcher.trusted_host_namespaces(proc)
+        with mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
+             mock.patch.object(launcher.os, 'geteuid', return_value=0), \
+             mock.patch.object(launcher.os, 'uname') as uname, \
+             mock.patch.object(launcher, 'trusted_host_namespaces', side_effect=ValueError('untrusted')), \
+             mock.patch.object(launcher, 'task_pid') as task:
+            uname.return_value.machine = 'x86_64'
+            with self.assertRaisesRegex(ValueError, 'untrusted'): launcher.run(None)
+            task.assert_not_called()
+
+    def test_system_socket_uses_verified_node_root_after_pair_checks(self):
+        from types import SimpleNamespace
+        launcher = self.module('socket_launcher', 'build/runtime_launcher.py')
+        sha = 'b'*64; revision = 'a'*40
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); (root / 'image-versions.json').write_text('{}')
+            lock = {'schema_version': 1, 'validation_artifacts_lock_sha256': sha,
+                    'source_lock_sha256': sha, 'image_versions_sha256': hashlib.sha256(b'{}').hexdigest(),
+                    'test_images': {'proc_transfer_probe': {'distribution': 'local-archive-import-only',
+                     'anonymous_pull_verified': False, 'local_tag': 'probe:fixed',
+                     'oci_digest': 'sha256:' + sha, 'config_digest': 'sha256:' + 'c'*64}}}
+            image_lock = root / 'images.json'; image_lock.write_text(json.dumps(lock))
+            metadata_path = root / 'metadata.json'
+            metadata = {'build_mode': 'release', 'proc_transfer': {'lock': {'revision': revision}},
+                        'source_inputs_sha256': {'build/proc-transfer.lock.json': sha},
+                        'binary_sha256': {name: sha for name in ('sysbox-fs', 'proc-mount-helper', 'sysbox-runc', 'sysbox-mgr')},
+                        'supervisor_sha256': sha}
+            args = SimpleNamespace(image_lock=image_lock, metadata=metadata_path, container='d'*64)
+            for failure in (None, 'revision', 'source-lock', 'binary'):
+                changed = copy.deepcopy(metadata)
+                if failure == 'revision': changed['proc_transfer']['lock']['revision'] = 'e'*40
+                if failure == 'source-lock': changed['source_inputs_sha256']['build/proc-transfer.lock.json'] = 'e'*64
+                if failure == 'binary': changed['binary_sha256']['sysbox-fs'] = 'e'*64
+                metadata_path.write_text(json.dumps(changed))
+                with self.subTest(failure=failure), \
+                     mock.patch.object(launcher, 'BASE', root), \
+                     mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
+                     mock.patch.object(launcher.os, 'geteuid', return_value=0), \
+                     mock.patch.object(launcher.os, 'uname', return_value=SimpleNamespace(machine='x86_64')), \
+                     mock.patch.object(launcher, 'trusted_host_namespaces', return_value={'pid': 'pid:[1]', 'user': 'user:[2]'}), \
+                     mock.patch.object(launcher, 'verify_artifacts', return_value={'revision': revision, 'source_lock_sha256': sha}), \
+                     mock.patch.object(launcher, 'digest', return_value=sha), \
+                     mock.patch.object(launcher.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)), \
+                     mock.patch.object(launcher.subprocess, 'check_output', side_effect=[
+                         'REF TYPE DIGEST\nprobe:fixed type sha256:' + sha + '\n', b'{"Image":"probe:fixed"}']), \
+                     mock.patch.object(launcher, 'task_pid', side_effect=RuntimeError('socket reached')) as task:
+                    if failure:
+                        with self.assertRaises(ValueError): launcher.run(args)
+                        task.assert_not_called()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'socket reached'): launcher.run(args)
+                        task.assert_called_once_with('/proc/1/root/system/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
+
+    def test_fifo_is_private_same_inode_through_process_root_and_exit_is_preserved(self):
+        import os
+        wrapper = self.module('fifo_wrapper', 'build/runtime_exec.py')
+        real_run = subprocess.run
+        directories = []
+        def ctr(command, **kwargs):
+            visible = Path(next(x.split('=', 1)[1] for x in command if x.startswith('--fifo-dir=')))
+            self.assertEqual(visible.parts[1:4], ('proc', str(os.getpid()), 'root'))
+            local = Path('/') / Path(*visible.parts[4:])
+            directories.append(local)
+            self.assertEqual(local.parent, Path('/tmp'))
+            self.assertEqual(local.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(local.stat().st_uid, os.geteuid())
+            self.assertTrue(local.samefile(visible))
+            os.mkfifo(visible / 'stdin', 0o600)
+            # A separate daemon-side process resolves the supplied path to the
+            # exact FIFO inode created from the client's Pod-local view.
+            observed = real_run([sys.executable, '-c',
+                'import os,sys; s=os.stat(sys.argv[1]); print(s.st_dev,s.st_ino)',
+                str(visible / 'stdin')], capture_output=True, text=True, check=True, timeout=5)
+            st = (local / 'stdin').stat()
+            self.assertEqual(observed.stdout.strip(), f'{st.st_dev} {st.st_ino}')
+            self.assertIn('--user=1001:1001', command)
+            self.assertEqual(command[-4:], ['a'*64, 'sh', '-c', 'exit 23'])
+            self.assertEqual(kwargs['timeout'], 19)
+            return subprocess.CompletedProcess(command, 23)
+        with mock.patch.object(wrapper.subprocess, 'run', side_effect=ctr), \
+             mock.patch.dict(os.environ, {'TMPDIR': '/run/containerd'}):
+            self.assertEqual(wrapper.execute(['sh', '-c', 'exit 23'], 'a'*64, 19), 23)
+        self.assertTrue(directories)
+        self.assertTrue(all(not directory.exists() for directory in directories))
+
+    def test_fifo_identity_failure_never_starts_ctr_and_cleans_storage(self):
+        wrapper = self.module('fifo_bad_identity', 'build/runtime_exec.py')
+        directories = []
+        def mismatch(local, other):
+            directories.append(local)
+            return False
+        with mock.patch.object(wrapper.Path, 'samefile', mismatch), \
+             mock.patch.object(wrapper.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'identity/mode'): wrapper.execute(['true'], 'a'*64)
+            run.assert_not_called()
+        self.assertTrue(all(not directory.exists() for directory in directories))
+
+    def test_fifo_wrong_mode_fails_closed_before_exec(self):
+        wrapper = self.module('fifo_bad_mode', 'build/runtime_exec.py')
+        chmod = Path.chmod; directories = []
+        def wrong_mode(local, mode):
+            directories.append(local)
+            chmod(local, 0o755)
+        with mock.patch.object(wrapper.Path, 'chmod', wrong_mode), \
+             mock.patch.object(wrapper.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'identity/mode'): wrapper.execute(['true'], 'a'*64)
+            run.assert_not_called()
+        self.assertTrue(directories)
+        self.assertTrue(all(not directory.exists() for directory in directories))
+
+    def test_fifo_cleanup_follows_bounded_owned_delete_for_all_exceptional_paths(self):
+        wrapper = self.module('fifo_cleanup', 'build/runtime_exec.py')
+        for error in (subprocess.TimeoutExpired('exec', 10), InterruptedError('cancelled'), OSError('launch failed')):
+            for cleanup in (0, 137, 1, subprocess.TimeoutExpired('delete', 15), InterruptedError('cancelled again')):
+                with self.subTest(error=type(error).__name__, cleanup=str(cleanup)):
+                    commands = []; directories = []
+                    def ctr(command, **kwargs):
+                        commands.append(command)
+                        if len(commands) == 1:
+                            directory = Path(next(x.split('=', 1)[1] for x in command if x.startswith('--fifo-dir=')))
+                            directories.append(directory)
+                            (directory / 'still-needed').write_text('owned')
+                            raise error
+                        self.assertEqual(kwargs['timeout'], 15)
+                        self.assertTrue((directories[0] / 'still-needed').exists())
+                        self.assertEqual(command, commands[0][:4] + ['delete', '--force',
+                            next(x for x in commands[0] if x.startswith('--exec-id=')), 'a'*64])
+                        if isinstance(cleanup, BaseException): raise cleanup
+                        return subprocess.CompletedProcess(command, cleanup)
+                    with mock.patch.object(wrapper.subprocess, 'run', side_effect=ctr), \
+                         mock.patch.object(wrapper.sys, 'stderr', new=io.StringIO()):
+                        with self.assertRaises(type(error)) as raised: wrapper.execute(['false'], 'a'*64, 10)
+                        self.assertIs(raised.exception, error)
+                    self.assertEqual(len(commands), 2)
+                    self.assertFalse(directories[0].exists())
+
+    def test_exec_main_cancellation_deadline_status_and_invalid_inputs(self):
+        import signal
+        wrapper = self.module('exec_main', 'build/runtime_exec.py')
+        for container, timeout in (('unowned', 1), ('a'*64, 0), ('a'*64, 601)):
+            with mock.patch.object(wrapper.tempfile, 'TemporaryDirectory') as storage, \
+                 mock.patch.object(wrapper.subprocess, 'run') as run:
+                with self.assertRaises(ValueError): wrapper.execute(['false'], container, timeout)
+                storage.assert_not_called(); run.assert_not_called()
+        for event in (signal.SIGTERM, signal.SIGINT, 'deadline', 'exit'):
+            handlers = {}
+            def invoke(arguments, container, timeout):
+                self.assertEqual((arguments, container, timeout), (['sh', '-c', 'exit 37'], 'a'*64, 21))
+                if event == 'deadline': raise subprocess.TimeoutExpired('exec', timeout)
+                if event == 'exit': return 37
+                handlers[event](event, None)
+            with self.subTest(event=event), \
+                 mock.patch.object(wrapper.signal, 'signal', side_effect=lambda sig, handler: handlers.update({sig: handler})), \
+                 mock.patch.object(wrapper, 'execute', side_effect=invoke), \
+                 mock.patch.object(wrapper.sys, 'argv', ['runtime_exec.py', 'sh', '-c', 'exit 37']), \
+                 mock.patch.dict(wrapper.os.environ, {'PROC_TRANSFER_PROBE_CONTAINER': 'a'*64, 'PROC_TRANSFER_EXEC_TIMEOUT': '21'}):
+                self.assertEqual(wrapper.main(), 37 if event == 'exit' else 124)
 
     def test_exec_timeout_removes_only_owned_exec_and_propagates_failure(self):
         wrapper = self.module('exec_wrapper', 'build/runtime_exec.py')

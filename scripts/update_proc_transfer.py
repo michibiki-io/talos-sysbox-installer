@@ -19,6 +19,7 @@ def main():
     args = parser.parse_args()
     if args.output.resolve() == (ROOT / 'build/proc-transfer.lock.json').resolve() or args.output.exists():
         parser.error('use a new candidate file, then review the diff before replacing the approved lock')
+    baseline = integration.load_lock(ROOT / 'build/proc-transfer.lock.json')
     url = integration.archive_url(args.revision)
     with tempfile.TemporaryDirectory() as work:
         archive = Path(work) / 'source.tar.gz'
@@ -26,6 +27,7 @@ def main():
         root = Path(work) / 'source'
         integration.unpack(archive, root)
         integration.verify_manifest(root, json.loads(args.versions.read_text()))
+        integration.verify_production_inputs(root, baseline)
         lock = dict(schema_version=1, contract=integration.CONTRACT,
                     repository=integration.REPOSITORY, revision=args.revision,
                     url=url, sha256=integration.sha256(archive), input_sha256=integration.inventory(root))
