@@ -135,7 +135,11 @@ The selected upstream fix captures all 11 proc candidates before sandbox checks,
 
 Updating the source lock changes the production fs embedded integration revision, binary hash and `source_inputs_sha256` even though the proc patch/helper bytes are unchanged. Validation/production revision, source-lock and installed-binary pairing checks remain mandatory. The full new-artifact Talos suite requires matching installer and probe/tool artifacts from the same head, followed by a separately approved installer upgrade and required reboot. Until then retain installed v0.3.0 and the existing RuntimeClass; no split production/test-lock compatibility is supported. Launcher/FIFO-only checks on the old lock do not satisfy this gate.
 
-For this source update, portable launcher/FIFO/adapter/updater and build/source/license/publication/recovery regressions pass locally. Fixed-builder regeneration of both installer compositions (standard and VMware), probe/tool artifacts, inventories, image locks, metadata and corresponding sources, selected upstream build tests, exact-head CI, the full corrected-artifact real Talos suite, Docker/kind/Helm/Service/default-runtime checks and live publication/anonymous pulls remain unrun pending their separate execution. No new image or real-node result is claimed. Upstream arm64/Linux 7.1/bwrap 0.9.0 results are historical evidence about different artifacts. Compilation and host-kernel regressions cannot establish that this pair fixes Talos. New nested sysfs and arm64 support are outside this integration. A missing public probe remains a documented distribution limitation, not a fabricated anonymous-pull success.
+As of 2026-10-16, source-update evidence for verified implementation head `8b20abeab4a3f2a85c88b2ba124840644f77922e` records a successful fixed-builder build of both installer compositions (standard and VMware), probe/tool artifacts, inventories, image locks, metadata and corresponding sources. All 79 focused local unit tests passed, including portable launcher/FIFO/adapter/updater and build/source/license/publication/recovery regressions. The four native validation groups, including selected upstream build tests, passed with zero conditional skips. All six release assets passed offline validation, including source/license assets and probe/tool inventory; the corresponding-source archive is 1763008854 bytes (<2 GiB). Required [Test CI run 38776850784](https://github.com/michibiki-io/talos-sysbox-installer/actions/runs/38776850784) succeeded for that implementation SHA, with all four native groups passing and zero skips; CI and local build values matched for `binary_sha256`, `supervisor_sha256` and `source_inputs_sha256`. These results describe that verified implementation head, not a later documentation head. CI Talos-in-Docker passed seven supporting checks: direct rootful Docker, privileged child, kind Ready, Helm rollout, Service DNS/TCP, recreated identity/child and ordinary runtime. Namespace and cluster cleanup also succeeded. This amd64 Talos 1.12.6 environment used runner kernel `6.17.0-1022-azure`, not the real Talos kernel.
+
+The initial default-network build FAILED before compilation because the Docker bridge was unavailable. The supported `--network host` build then succeeded without persistent host configuration changes; the initial failure is not a product validation pass.
+
+The full corrected-artifact real Talos suite remains UNRUN pending a separately approved matching installer upgrade and required reboot; installed v0.3.0 and the existing RuntimeClass remain retained. The historical v0.3.0 partial results above do not establish new-artifact success. Live publication and anonymous pulls remain UNRUN until the authorized post-merge release. Upstream arm64/Linux 7.1/bwrap 0.9.0 results are historical evidence about different artifacts. Compilation and host-kernel regressions cannot establish that this pair fixes Talos. New nested sysfs and arm64 support are outside this integration. A missing public probe remains a documented distribution limitation, not a fabricated anonymous-pull success.
 
 ## 日本語
 
@@ -309,9 +313,21 @@ validation/production の revision、source-lock、導入済み binary の pair 
 それまでは導入済み v0.3.0 と既存 RuntimeClass を保持します。
 production/test lock を分離する互換契約は導入せず、旧 lock の launcher/FIFO 単独検査でこの条件を満たしたとは扱いません。
 
-今回の source 更新では、移植可能な launcher/FIFO/adapter/updater と build/source/license/公開/復旧のローカル回帰検査が成功しています。
-固定 builder による両 installer 構成（standard と VMware）、probe/tool、inventory、image lock、metadata、対応ソースの再生成、選択した upstream build test、同一 head の CI、修正版成果物の実 Talos 完全 suite、Docker/kind/Helm/Service/default-runtime、実公開と匿名 pull は、別途実行するまで未実施です。
-新 image や新たな実ノード結果は主張しません。
+2026-10-16 時点で、検証済み実装 head `8b20abeab4a3f2a85c88b2ba124840644f77922e` の source 更新の証跡では、固定 builder による両 installer 構成（standard と VMware）、probe/tool、inventory、image lock、metadata、対応ソースのビルドが成功しています。
+移植可能な launcher/FIFO/adapter/updater と build/source/license/公開/復旧の回帰検査を含め、ローカルの focused unit test 全79件が成功しました。
+選択した upstream build test を含む native 検証4群も、条件付き skip 0で成功しました。
+source/license 成果物と probe/tool inventory を含む release asset 全6件のオフライン検証が成功し、対応ソース archive は1763008854 bytes（2 GiB 未満）でした。
+必須の [Test CI run 38776850784](https://github.com/michibiki-io/talos-sysbox-installer/actions/runs/38776850784) は、この実装 SHA で成功し、native 4群も skip 0で成功しました。CI とローカルビルドの `binary_sha256`、`supervisor_sha256`、`source_inputs_sha256` は一致しました。
+これらは検証済み実装 head の結果であり、後続の文書修正 head の結果ではありません。
+CI の Talos-in-Docker では、direct rootful Docker、privileged child、kind Ready、Helm rollout、Service DNS/TCP、identity/child の再作成、通常 runtime の補助7検査が成功し、namespace と cluster の cleanup も成功しました。
+この amd64 Talos 1.12.6 環境は runner kernel `6.17.0-1022-azure` を使用しており、実 Talos kernel ではありません。
+
+初回の default-network build は、Docker bridge が利用できず、コンパイル前に失敗（FAILED）しました。
+その後、対応済みの `--network host` によるビルドは、host 設定を永続的に変更せず成功しました。初回の失敗を製品検証の合格とは扱いません。
+
+修正版成果物による実 Talos 完全 suite は、対応する installer の upgrade と必要な reboot の別途承認待ちで、未実施（UNRUN）です。導入済み v0.3.0 と既存 RuntimeClass は保持されています。
+前述の過去の v0.3.0 の部分的な結果は、新成果物の成功を示しません。
+実公開と匿名 pull は、承認された merge 後の release まで未実施（UNRUN）です。
 upstream の arm64/Linux 7.1/bwrap 0.9.0 の成功は異なる成果物の過去の結果です。
 コンパイルと host kernel の回帰検査から、今回の pair が Talos を修正したとは主張しません。
 新規 nested sysfs と arm64 は対象外です。
