@@ -14,6 +14,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+import sys
+sys.path.insert(0, str(ROOT / 'build'))
+import proc_transfer
 
 
 def run(args, **kw):
@@ -92,7 +95,7 @@ def archive_member(member):
     return member
 
 
-def source_archive(out, selected_lock):
+def source_archive(out, selected_lock, include_probe=False):
     # Most inputs are already compressed archives; a fast outer gzip keeps
     # large corresponding-source bundles practical on disposable CI runners.
     with (out/'sources.tar.gz').open('wb') as output, gzip.GzipFile(fileobj=output,mode='wb',filename='',mtime=0,compresslevel=1) as zipped, tarfile.open(fileobj=zipped,mode='w') as tf:
@@ -102,6 +105,11 @@ def source_archive(out, selected_lock):
         if hashlib.sha256((project/'versions.lock.json').read_bytes()).digest()!=hashlib.sha256(selected_lock.read_bytes()).digest():
             raise RuntimeError('Selected lock changed after the isolated build')
         tf.add(project,arcname='project',filter=archive_member)
+        if include_probe:
+            if not (out/'validation/corresponding-source').is_dir():
+                raise RuntimeError('missing probe corresponding sources')
+            tf.add(out/'validation/corresponding-source', arcname='sources/probe', filter=archive_member)
+            tf.add(out/'validation/test-images.lock.json', arcname='probe-build-inputs.json', filter=archive_member)
 
 
 def main():
@@ -113,6 +121,7 @@ def main():
     p.add_argument('--output', type=Path, default=ROOT / '.build')
     p.add_argument('--lock', type=Path, default=ROOT / 'versions.lock.json')
     p.add_argument('--extension-only', action='store_true')
+    p.add_argument('--with-probe', action='store_true', help='Include the optional fixed-source probe in existing release inputs')
     a = p.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+', a.version):
         p.error('version must be project semantic version without v')
@@ -131,13 +140,22 @@ def main():
         for name in ('build', 'supervisor'):
             shutil.copytree(ROOT / name, context / name, ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
         (context/'scripts').mkdir()
-        for name in ('build.py','publish.py'):shutil.copy2(ROOT/'scripts'/name,context/'scripts'/name)
+        for name in ('build.py','publish.py','build_validation_image.py','update_proc_transfer.py','proc_transfer_operator.py'):shutil.copy2(ROOT/'scripts'/name,context/'scripts'/name)
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')
         common = ['docker','buildx','build','--builder',a.builder,'--network',a.network,'--platform','linux/amd64','--build-arg','GO_IMAGE='+lock['go'],'--build-arg','UBUNTU_IMAGE='+lock['ubuntu'],'--build-arg','APT_SNAPSHOT='+lock['apt_snapshot'],'--build-arg','CATALOGUE_IMAGE='+lock['catalogue'],'-f',str(context/'build/Dockerfile')]
-        run([*common,'--target','evidence','--output','type=local,dest='+str(out/'evidence'),str(context)])
+        proc_transfer.load_lock(context / 'build/proc-transfer.lock.json')
+        # Export into a fresh staging directory; failed builds cannot mix old
+        # paired binaries, validation artifacts or source files with new ones.
+        with tempfile.TemporaryDirectory(prefix='evidence-', dir=out) as staging:
+            run([*common,'--target','evidence','--output','type=local,dest='+staging,str(context)])
+            if (out/'evidence').exists(): shutil.rmtree(out/'evidence')
+            shutil.move(staging, out/'evidence')
         run([*common,'--target','extension','--load','-t',extension,str(context)])
     run(['docker','save','-o',str(out/'extension.tar'),extension])
+    metadata = json.loads((out/'evidence/build-metadata.json').read_text())
+    assertions = proc_transfer.verify_extension_archive(out/'extension.tar', metadata)
+    (out/'extension-assertions.json').write_text(json.dumps(assertions, indent=2)+'\n')
     oci = out / 'extension-oci'
     if oci.exists(): shutil.rmtree(oci)
     digest = docker_to_oci(out/'extension.tar', oci)
@@ -173,6 +191,17 @@ def main():
         filename=installer['variant']+'-image.tar'
         shutil.copyfile(out/installer['variant']/'image.tar',out/filename)
         record['image_archives'][installer['image']]={'file':filename,'sha256':file_sha256(out/filename)}
+    if a.with_probe:
+        probe_image = a.registry_prefix + '/talos-sysbox-proc-transfer-probe:' + tag
+        run([sys.executable, str(ROOT/'scripts/build_validation_image.py'), '--builder', a.builder,
+             '--network', a.network, '--output', str(out/'validation'), '--image', probe_image, '--lock', str(a.lock),
+             '--production-metadata', str(out/'evidence/build-metadata.json')])
+        probe_lock = json.loads((out/'validation/test-images.lock.json').read_text())
+        record['probe'] = {'image': probe_image, 'test_image_lock': probe_lock}
+        shutil.copyfile(out/'validation/probe-image.tar', out/'probe-image.tar')
+        record['image_config_digests'][probe_image] = archive_config_digest(out/'probe-image.tar')
+        record['image_archives'][probe_image] = {'file': 'probe-image.tar', 'sha256': file_sha256(out/'probe-image.tar')}
+        source_archive(out, a.lock, include_probe=True)
     (out/'images.json').write_text(json.dumps(record,indent=2)+'\n')
 
 

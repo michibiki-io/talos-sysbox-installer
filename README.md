@@ -8,6 +8,7 @@ Pinned, isolated builds of the amd64 Sysbox extension and standard/VMware Talos 
   - [Build and image variants](#build-and-image-variants)
   - [Installation and runtime opt-in](#installation-and-runtime-opt-in)
   - [Upgrades and rollback](#upgrades-and-rollback)
+  - [Proc transfer integration](#proc-transfer-integration)
   - [Backend trust and supervision](#backend-trust-and-supervision)
   - [Validation and compatibility](#validation-and-compatibility)
   - [Release and licensing](#release-and-licensing)
@@ -16,6 +17,7 @@ Pinned, isolated builds of the amd64 Sysbox extension and standard/VMware Talos 
   - [ビルドとイメージの種類](#ビルドとイメージの種類)
   - [導入とruntimeの選択](#導入とruntimeの選択)
   - [更新とロールバック](#更新とロールバック)
+  - [Proc transfer の取り込み](#proc-transfer-の取り込み)
   - [backendの特権と監督](#backendの特権と監督)
   - [検証と互換性](#検証と互換性)
   - [リリースとライセンス](#リリースとライセンス)
@@ -120,6 +122,10 @@ Rollback uses the previously recorded complete installer digest or the applicabl
 Recheck runtime registration, ordinary Pods and Sysbox Pods after rollback.
 Removing Sysbox requires migrating/deleting opted-in workloads and removing its handler and RuntimeClass during an approved maintenance operation.
 
+### Proc transfer integration
+
+The protected nested procfs integration pins public upstream commit `ab02207dafe00284797f64becd214c10e1c99285` in [build/proc-transfer.lock.json](build/proc-transfer.lock.json). Standalone runc/mgr compile before patching; fs and its static production helper build as a verified pair. The actual fs backend receives a fixed helper environment/path. See [source updates, activation and operator verification](docs/proc-transfer.md) for the separate validation artifacts, post-merge public-digest probe distribution and explicitly unpublished local bwrap 0.12.0 archive route. No anonymous-pull proof for a suitable public probe image or real Talos fix is claimed.
+
 ### Backend trust and supervision
 
 Extension services live under `/usr/local/lib/containers/sysbox-mgr` and `sysbox-fs`.
@@ -172,7 +178,7 @@ python3 scripts/validate_runtime.py \
 ```
 
 It checks direct Docker, a privileged child, kind Ready, Helm rollout, Service DNS/TCP, a changed workload container ID followed by successful child startup, and an ordinary default-runtime Pod.
-Before mutating the test namespace, it verifies the installed three Sysbox binaries and both supervisors against this build's SHA-256 values using explicit Talos API reads.
+Before mutating the test namespace, it verifies the installed three Sysbox binaries, production proc helper and both supervisors against this build's SHA-256 values using explicit Talos API reads.
 It also refuses artifacts whose recorded source inputs differ from the current checkout, preventing prior prototype results from being attributed to a changed build.
 It creates one unique owned namespace and deletes it even on failure.
 It preserves the user's default kubeconfig.
@@ -192,8 +198,8 @@ Release automation starts on pushes to the current default branch and requires a
 Only API-confirmed release candidates enter the publication concurrency group; metadata calculation, tagging and publication are serialized together. Noncandidate pushes cannot replace a pending release, including case variants of the default-branch name. A later eligible candidate can replace another pending candidate in GitHub’s concurrency group; commits of the replaced PR are not individually classified for a version. A fresh release stops if a descendant commit already has a semver tag; recovery of an existing tag on the exact same commit remains allowed. When there is no reachable version tag, the initial release version is `v0.2.0`. Release gating assumes trusted repository write collaborators; job conditions are not a security boundary against someone editing workflow files. Each push evaluates the merged PR at its tip SHA; combining multiple PR merges in one push is outside this release contract.
 It derives semver and release notes from individual commit subjects/bodies, including breaking-change markers, without using PR titles for classification.
 PR builds have read-only repository permissions and no publication credentials.
-Post-merge publication uses the existing GitHub Actions token and fails unless all three GHCR images are anonymously readable.
-All tags are checked before publication, then all missing images are pushed before any anonymous check. An owner must make all three newly created GHCR packages public using their existing permissions, then rerun the workflow to verify the original tags without rebuilding or repushing. A failed anonymous check is not a successful release.
+Post-merge publication uses the existing GitHub Actions token and fails unless all selected GHCR images, including the optional probe, are anonymously readable.
+All tags are checked before publication, then all missing images are pushed before any anonymous check. An owner must make all selected newly created GHCR packages public using their existing permissions, then rerun the workflow to verify the original tags without rebuilding or repushing. A failed anonymous check is not a successful release.
 This repository does not add authentication settings or buy credentials/credits.
 
 Releases attach image digests, effective inputs, package/source checksums and corresponding sources.
@@ -201,8 +207,8 @@ The extension retains third-party license texts, package copyright files and app
 `sources.tar.gz` includes matching Sysbox/ctr sources, Talos 1.12.6 and Linux 6.18.18 sources, the official iSCSI/util-linux extensions, the VMware-only guest agent, checksum-verified Go modules, and matching Ubuntu source packages. The pinned SideroLabs Talos/pkgs/extensions/tools/toolchain repositories provide kernel configuration, patches and rebuild recipes. `build/official-sources.lock.json` binds this inventory to the installer and extension digests; changing those pins requires a matching source inventory update. All three images use this common source bundle, with the VMware agent present only in the VMware installer. The pinned catalogue is checked before assembly. ctr is rebuilt from vendored sources with CGO disabled, and its Go build information is recorded. Sources are attached before image publication; distribute it alongside the binaries and keep it available for the corresponding release.
 The project MIT license does not replace Apache-2.0, BSD, GPL or LGPL licenses of bundled software.
 Registry login and `publish.py --preflight-only` check the classic Docker image store, loaded archive config digests and all existing tags before staging a release. Auth/transport failures stop without creating a release. Configuration digests come from saved archive config bytes, not Docker image IDs; a containerd image store is explicitly unsupported for a fresh or resumed push.
-The release retains `extension.tar`, `standard-image.tar` and `vmware-image.tar` with whole-archive SHA-256 values in `images.json`. All original archives, matching sources and provenance are attached to a draft before `images.json` is attached last as its completion marker. Only an incomplete draft without that marker can have its unfinished assets replaced. Matching source assets are made public before any GHCR push, including later releases whose packages are already public.
-If staging fails before the marker, rerun to rebuild and finish that unpublished draft after preflight. If login, preflight or a push fails after the marker, rerun to download and checksum/config/tag-verify all original archives before loading them; push only missing tags, never rebuild or replace existing tags/source assets. A preexisting tag with a different config digest still stops before any push. If anonymous checks fail, make all three packages public and rerun. A completed release with `release-images.json` is only verified using its original inputs and published digests, without loading archives, rebuilding or repushing. Missing/corrupt original assets stop explicitly; restore the exact original bytes rather than replacing the release or its tags.
+The release retains `extension.tar`, `standard-image.tar` and `vmware-image.tar`, plus `probe-image.tar` when selected, with whole-archive SHA-256 values in `images.json`. All original archives, matching sources and provenance are attached to a draft before `images.json` is attached last as its completion marker. Only an incomplete draft without that marker can have its unfinished assets replaced. Matching source assets are made public before any GHCR push, including later releases whose packages are already public.
+If staging fails before the marker, rerun to rebuild and finish that unpublished draft after preflight. If login, preflight or a push fails after the marker, rerun to download and checksum/config/tag-verify all original archives before loading them; push only missing tags, never rebuild or replace existing tags/source assets. A preexisting tag with a different config digest still stops before any push. If anonymous checks fail, make all selected packages public and rerun. A completed release with `release-images.json` is only verified using its original inputs and published digests, without loading archives, rebuilding or repushing. Missing/corrupt original assets stop explicitly; restore the exact original bytes rather than replacing the release or its tags.
 LGPL library replacement remains possible by rebuilding the helper rootfs from the supplied source/build inputs.
 
 ### Troubleshooting
@@ -297,6 +303,10 @@ PDB を自動で緩和しません。
 通常 Pod と Sysbox Pod の復旧も確認します。
 Sysbox の削除は、使用中の Pod の移行と handler と RuntimeClass の除去を含む保守作業です。
 
+### Proc transfer の取り込み
+
+公開 upstream の commit `ab02207dafe00284797f64becd214c10e1c99285` を [build/proc-transfer.lock.json](build/proc-transfer.lock.json) で固定します。単体 runc/mgr は patch 前にコンパイルし、fs と static production helper を対として検証します。実 fs backend に helper の環境変数と path を明示します。[更新、有効化、運用者検証](docs/proc-transfer.md) に、production から分離する検証用成果物、merge 後の公開 digest probe 配布、未公開の local bwrap 0.12.0 archive 経路を記載します。適合する公開 probe の匿名取得や実 Talos の修正済みという主張はしていません。
+
 ### backendの特権と監督
 
 extension service 内の supervisor は、CRI とは別の system containerd socket `/system/run/containerd/containerd.sock` を使用します。
@@ -330,7 +340,7 @@ Docker networking と必要な kernel 機能とリソースがある環境で、
 実 Talos 検証は、新しい installer を導入済みで runtime 登録済みの、明示的に許可された対象で実行します。
 runner は更新や再起動を行いません。
 kubeconfig、context、期待する node、`real-talos`、結果ファイル、build metadata、Talos API 接続設定を明示します。
-検証 namespace を作る前に、実ノードの Sysbox binary と supervisor を Talos API で読み、今回の SHA-256 と一致することを確認します。
+検証 namespace を作る前に、実ノードの Sysbox binary 3 種、production proc helper、両 supervisor を Talos API で読み、今回の SHA-256 と一致することを確認します。
 記録したソース入力と checkout が異なる成果物も拒否し、過去の prototype の成功を変更後のビルドへ流用できないようにします。
 直接 Docker、特権子コンテナ、kind Ready、Helm rollout、Service DNS/TCP、container ID が変わる再作成後の子コンテナ、通常 runtime の Pod を確認します。
 一意の専用 namespace を作り、失敗時も削除します。
@@ -351,8 +361,8 @@ VMware の runtime 対応をうたう前に、承認された VMware 環境で a
 API で確認した release 候補だけを公開 job の concurrency group に入れ、version の計算・tag の作成・公開をまとめて直列化します。候補ではない push は、既定 branch 名の大文字・小文字が異なる場合も含め、待機中の release を置き換えません。後続の公開対象候補は GitHub の concurrency group で待機中の別候補を置き換える場合があり、置き換えられた PR の commit は version 判定のために個別分類されません。後続 commit に semver tag がある場合は新規 release を停止し、同じ commit にある既存 tag の復旧は許可します。到達可能な version tag がない場合の初期 release version は `v0.2.0` です。 リリースの起動条件は repository への write 権限を持つ協力者を信頼する前提で、workflow 自体を編集できる人に対するセキュリティ境界ではありません。各 push の先端 SHA に対応するマージ済み PR を評価し、複数 PR の merge を一度の push にまとめる運用は、このリリース契約の対象外です。
 semantic version とノートは各 commit の subject/body と breaking-change marker から生成し、PR title を判定に使いません。
 PR build は read-only 権限で、公開用資格情報を渡しません。
-マージ後の公開は既存の GitHub Actions token を使い、3つの GHCR イメージを匿名で取得できることを確認します。
-全 tag を事前確認した後、存在しない3イメージすべてを push してから匿名確認します。新規 GHCR package は所有者が既存権限で3つとも public にし、workflow を再実行して元の tag を再ビルド／再 push せず検証します。
+マージ後の公開は既存の GitHub Actions token を使い、任意の probe を含む選択した全 GHCR image の匿名取得を確認します。
+全 tag を事前確認した後、選択した image（任意の probe を含む）のうち存在しないものすべてを push してから匿名確認します。新規 GHCR package は所有者が既存権限で全件を public にし、workflow を再実行して元の tag を再ビルド／再 push せず検証します。
 匿名確認が失敗したリリースを成功扱いにしません。
 認証設定の追加は行いません。
 
@@ -361,8 +371,8 @@ extension image の `/usr/local/share/licenses/talos-sysbox` に第三者ライ�
 `sources.tar.gz` は Sysbox/ctr、Talos 1.12.6、Linux 6.18.18、公式 iSCSI/util-linux extension、VMware 版専用の guest agent、checksum 検証済み Go module、Ubuntu source package を含みます。固定した SideroLabs の Talos/pkgs/extensions/tools/toolchain リポジトリに kernel 設定・patch・再ビルド recipe が含まれます。`build/official-sources.lock.json` で image digest と対応させ、image pin の変更時には source inventory も更新します。3イメージで共通の source bundle を使い、VMware agent の binary は VMware installer のみに含みます。組み立て前に固定 catalogue と照合します。ctr は vendor source から CGO 無効で再ビルドし、Go build 情報を記録します。binary 公開前に source asset を添付し、各 binary リリースと一緒に配布して利用可能な状態を維持します。
 リポジトリの MIT は同梱物の Apache-2.0、BSD、GPL、LGPL を置き換えません。
 registry login と `publish.py --preflight-only` により、release を作る前に classic Docker image store、読み込んだ archive の config digest、全既存 tag を確認します。認証・通信の失敗時は release を作りません。configuration digest は Docker image ID ではなく保存済み archive の config bytes から計算し、新規／復旧時の push で containerd image store は明示的に拒否します。
-release に `extension.tar`・`standard-image.tar`・`vmware-image.tar` を保持し、archive 全体の SHA-256 を `images.json` に記録します。元の archive・対応ソース・provenance を draft に全件添付した後、最後に `images.json` を完了 marker として添付します。marker のない未完成 draft の途中 asset だけ置換できます。既に package が public の後続リリースも含め、全 GHCR push の前に対応ソースを公開します。
-marker 前に添付が失敗した場合は、再実行で事前確認後に再ビルドした未公開 draft を完成させます。marker 後の login・事前確認・push の失敗では、再実行で元の archive を全件取得し、checksum・config digest・tag を検証してから読み込み、不足 tag だけを push します。再ビルドや既存 tag／source asset の置換はしません。異なる config digest の既存 tag は push 前に拒否します。匿名確認の失敗時は3 package を public にして再実行します。`release-images.json` のある完了済み release は元の入力と公開 digest の再検証だけを行い、archive の読み込み・再ビルド・再 push はしません。元の asset の不足・破損は明示的に停止し、release や tag の置換ではなく元の bytes を復元します。
+release に `extension.tar`・`standard-image.tar`・`vmware-image.tar` と、選択時の `probe-image.tar` を保持し、archive 全体の SHA-256 を `images.json` に記録します。元の archive・対応ソース・provenance を draft に全件添付した後、最後に `images.json` を完了 marker として添付します。marker のない未完成 draft の途中 asset だけ置換できます。既に package が public の後続リリースも含め、全 GHCR push の前に対応ソースを公開します。
+marker 前に添付が失敗した場合は、再実行で事前確認後に再ビルドした未公開 draft を完成させます。marker 後の login・事前確認・push の失敗では、再実行で元の archive を全件取得し、checksum・config digest・tag を検証してから読み込み、不足 tag だけを push します。再ビルドや既存 tag／source asset の置換はしません。異なる config digest の既存 tag は push 前に拒否します。匿名確認の失敗時は選択した全 package を public にして再実行します。`release-images.json` のある完了済み release は元の入力と公開 digest の再検証だけを行い、archive の読み込み・再ビルド・再 push はしません。元の asset の不足・破損は明示的に停止し、release や tag の置換ではなく元の bytes を復元します。
 提供した source と build input から helper rootfs を再構築し、LGPL ライブラリを交換できます。
 
 ### 障害調査

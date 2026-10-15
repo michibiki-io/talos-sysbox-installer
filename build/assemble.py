@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from official_sources import collect, verify_catalogue, is_notice, stable_json
+import proc_transfer
 
 LOCK = json.loads(Path('/work/versions.lock.json').read_text())
 OUT = Path('/out')
@@ -19,6 +20,7 @@ LOCAL = OUT / 'rootfs/usr/local'
 SOURCES = OUT / 'sources'
 LIC = LOCAL / 'share/licenses/talos-sysbox'
 packages = set()
+integration_record = {}
 
 
 def run(args):
@@ -86,7 +88,7 @@ def rebuild_sysbox():
     header.write_text(re.sub(r'(#define\s+SECCOMP_IOCTL_NOTIF_ID_VALID\s+)SECCOMP_IOW\(2, __u64\)', r'\1SECCOMP_IOR(2, __u64)', text))
     target=Path('/work/rebuilt');target.mkdir()
     links=source_root/'link-maps';links.mkdir()
-    env=dict(os.environ,CGO_ENABLED='1',GOTOOLCHAIN='local',GOFLAGS='-mod=readonly -p=2',GOMAXPROCS='2',GOPROXY='https://proxy.golang.org',GOSUMDB='sum.golang.org',GOPRIVATE='',GONOSUMDB='',GONOPROXY='')
+    env=dict(os.environ,CGO_ENABLED='1',GOTOOLCHAIN='local',GOFLAGS='-mod=readonly -p=2',GOMAXPROCS='2',GOPROXY='https://proxy.golang.org',GOSUMDB='sum.golang.org',GOPRIVATE='',GONOSUMDB='',GONOPROXY='',PYTHONDONTWRITEBYTECODE='1')
     generator=SOURCES/'protobuf-generator.zip'
     download(LOCK['protobuf_generator'],generator)
     generator_root=Path('/work/protobuf-generator');generator_root.mkdir()
@@ -105,13 +107,35 @@ def rebuild_sysbox():
         generated=SOURCES/'generated/sysbox-ipc'/(part+'Grpc')/(part+'Protobuf')
         generated.mkdir(parents=True,exist_ok=True)
         shutil.copy2(proto_dir/(part+'Protobuf.pb.go'),generated)
+    integration_lock = proc_transfer.load_lock(Path('/work/project/build/proc-transfer.lock.json'))
+    integration_root = SOURCES / 'proc-transfer'
+    manifest = proc_transfer.fetch(integration_lock, SOURCES / 'proc-transfer.tar.gz', integration_root, LOCK)
+    for notice in ('LICENSE', 'LICENSES/Apache-2.0.txt', 'THIRD_PARTY_NOTICES.md'):
+        dest = LIC / 'proc-transfer' / notice
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(integration_root / notice, dest)
+    integration_record.update({'lock': integration_lock, 'upstream_manifest': manifest,
+                               'effective_go': run(['go', 'version']),
+                               'effective_cc': run(['cc', '--version']).splitlines()[0],
+                               'effective_ld': run(['ld', '--version']).splitlines()[0],
+                               'effective_protoc': run(['protoc', '--version']),
+                               'protobuf_generator': LOCK['protobuf_generator'],
+                               'standalone_build_scope': 'runc and mgr compiled before patch application; only fs links patched runc nsexec'})
     for component,tags,package in [('sysbox-runc','seccomp apparmor idmapped_mnt netgo osusergo','.'),('sysbox-mgr','idmapped_mnt netgo osusergo','.'),('sysbox-fs','netgo osusergo','./cmd/sysbox-fs')]:
+        if component == 'sysbox-fs':
+            integration_record['unpatched_nsexec_sha256'] = proc_transfer.sha256(source_root / 'sysbox-runc/libcontainer/nsenter/nsexec.c')
+            proc_transfer.apply_patch(source_root, integration_root)
         module_locks=Path('/work/project/build/sysbox-module-locks')/component
         generating=os.environ.get('GENERATE_MODULE_LOCKS')=='1'
         if not generating and module_locks.is_dir():
             for name in ('go.mod','go.sum'):
                 shutil.copy2(module_locks/name,source_root/component/name)
         commit=LOCK['sysbox_components'][component]['commit']
+        if component == 'sysbox-fs':
+            integration_record['patched_nsexec_sha256'] = proc_transfer.sha256(source_root / 'sysbox-runc/libcontainer/nsenter/nsexec.c')
+            if integration_record['patched_nsexec_sha256'] == integration_record['unpatched_nsexec_sha256']:
+                raise RuntimeError('fs dependency patch did not change nsexec')
+            commit += '+proc-transfer.' + integration_lock['revision'][:12]
         linkmap=links/(component+'.map')
         flags=f"-buildid= -w -linkmode=external -extldflags '-static -Wl,-Map,{linkmap}' -X 'main.edition=Community Edition (CE)' -X main.version={LOCK['sysbox']} -X main.commitId={commit} -X main.builtAt=locked-source-build -X main.builtBy=michibiki.io"
         build_env=dict(env,GOFLAGS='-mod=mod -p=2') if generating else env
@@ -126,6 +150,15 @@ def rebuild_sysbox():
         # matching signed-snapshot source packages and license texts too.
         for library in set(re.findall(r'(/[^\s()]+\.a)',linkmap.read_text())):
             if Path(library).is_file(): owner(Path(library).resolve())
+    helper_map = links / 'proc-mount-helper.map'
+    subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-static',
+                    '-Wl,-Map,' + str(helper_map), str(integration_root / 'helper/proc-mount-helper.c'),
+                    '-o', str(target / 'proc-mount-helper')], check=True)
+    for library in set(re.findall(r'(/[^\s()]+\.a)', helper_map.read_text())):
+        if Path(library).is_file(): owner(Path(library).resolve())
+    # Preserve linker evidence for actual linked static library attribution.
+    shutil.copytree(links, SOURCES / 'link-maps')
+    build_validation(integration_root, source_root, env)
     for path in source_root.rglob('*'):
         if path.is_file() and is_notice(str(path)):
             destination=LIC/'sysbox-source'/path.relative_to(source_root)
@@ -145,6 +178,47 @@ def rebuild_sysbox():
             destination.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,destination)
     return target
 
+
+
+def build_validation(integration, source_root, env):
+    """Fixed-source regressions and separate trusted-launcher artifacts."""
+    validation = OUT / 'validation'
+    validation.mkdir()
+    shutil.copytree(integration / 'tests/runtime', validation / 'runtime')
+    shutil.copy2('/work/project/build/runtime_launcher.py', validation / 'launcher.py')
+    for name in ('runtime_exec.py', 'probe_idle.py'):
+        shutil.copy2('/work/project/build/' + name, validation / name)
+    shutil.copy2('/work/ctr', validation / 'ctr')
+    for source, output, threaded in [('tests/unit/helper-checkpoint.c', 'helper-checkpoint', False),
+                                     ('tests/runtime/checkpoint-requester.c', 'checkpoint-requester', True)]:
+        args = ['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-static']
+        if threaded: args.append('-pthread')
+        subprocess.run([*args, str(integration / source), '-o', str(validation / output)], check=True)
+    seccomp = source_root / 'sysbox-fs/seccomp'
+    shutil.copy2(integration / 'tests/upstream/proc_policy_test.go', seccomp / 'proc_policy_test.go')
+    (seccomp / 'testdata').mkdir(exist_ok=True)
+    shutil.copy2(integration / 'tests/unit/lifecycle.c', seccomp / 'testdata/proc_lifecycle.c')
+    checks = [(['go', 'test', '-v', '-tags', 'netgo osusergo', './seccomp', '-run',
+                '^TestProc(PolicyBeforeNestedTransfer|RequesterThreadPidfd|TransferInvalidNotificationDoesNotLaunch|TransferRealNotification)$', '-count=1'], source_root / 'sysbox-fs', 180),
+              (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_lifecycle.py', '-v'], integration, 120)]
+    rejection = subprocess.run(['/work/rebuilt/proc-mount-helper', '0', '0', '0'],
+                               close_fds=True, capture_output=True, timeout=5)
+    if rejection.returncode == 0 or b'proc-transfer:' not in rejection.stderr:
+        raise RuntimeError('production helper accepted an unauthorized direct launch')
+    results = [{'command': ['proc-mount-helper', '0', '0', '0'], 'status': 'passed', 'conditional_skips': 0}]
+    for command, cwd, timeout in checks:
+        result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+        results.append({'command': command, 'status': 'passed' if result.returncode == 0 else 'failed',
+                        'conditional_skips': result.stdout.count('--- SKIP:') + result.stderr.count('skipped')})
+        if result.returncode:
+            print(result.stdout, result.stderr, flush=True)
+            raise RuntimeError('selected upstream regression failed')
+    (validation / 'upstream-results.json').write_text(stable_json(results))
+    record = {'schema_version': 1, 'revision': integration_record['lock']['revision'],
+              'architecture': 'amd64', 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
+              'source_lock_sha256': proc_transfer.sha256(Path('/work/project/build/proc-transfer.lock.json')),
+              'artifact_sha256': proc_transfer.inventory(validation)}
+    (validation / 'artifacts.lock.json').write_text(stable_json(record))
 
 def main():
     verify_catalogue(LOCK, Path('/work/catalogue-image-digests').read_text())
@@ -190,6 +264,11 @@ def main():
         for name in ('subuid', 'subgid'):
             root.joinpath('etc', name).write_text('sysbox:100000:65536\n')
         shutil.copy2(LOCAL / 'bin' / daemon, root / daemon)
+        if daemon == 'sysbox-fs':
+            pair_helper = root / 'proc-mount-helper'
+            shutil.copy2(rebuilt / 'proc-mount-helper', pair_helper)
+            pair_helper.chmod(0o755)
+            binaries['proc-mount-helper'] = proc_transfer.sha256(pair_helper)
         shutil.copy2('/work/ctr', root / 'ctr')
         shutil.copy2('/work/supervisor', root / 'supervisor')
         helper('/bin/sh', root, '/bin/sh')
@@ -238,7 +317,9 @@ logToConsole: false
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
-    report = {'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
+    integration_record['output_sha256'] = {name: binaries[name] for name in ('sysbox-fs', 'proc-mount-helper')}
+    proc_transfer.verify_pair(LOCAL, binaries)
+    report = {'proc_transfer': integration_record, 'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'Standalone runc/mgr unpatched; fs patched and paired with static helper. All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
     OUT.joinpath('build-metadata.json').write_text(stable_json(report))
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1

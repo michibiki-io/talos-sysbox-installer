@@ -22,8 +22,12 @@ def find_release(repo,tag):
 def validate_archives(inputs,directory):
     images=[inputs['extension']['image'],*(item['image'] for item in inputs['installers'])]
     if len(images)!=3 or len(set(images))!=3:raise RuntimeError('Expected three distinct original images')
+    filenames=list(ARCHIVES)
+    if 'probe' in inputs:
+        images.append(inputs['probe']['image']); filenames.append('probe-image.tar')
+    if len(set(images)) != len(images):raise RuntimeError('Duplicate original images')
     paths=[]
-    for image,filename in zip(images,ARCHIVES):
+    for image,filename in zip(images,filenames):
         record=inputs['image_archives'][image]
         if record['file']!=filename:raise RuntimeError('Unexpected original archive name/order')
         path=directory/filename
@@ -36,12 +40,18 @@ def validate_archives(inputs,directory):
     return paths
 
 
-def stage(repo,tag,directory,preflight):
-    inputs=json.loads((directory/'images.json').read_text())
-    if preflight!={'preflight':True,'inputs':inputs}:raise RuntimeError('Successful preflight does not match these original inputs')
+def validate_assets(inputs,directory):
+    """Validate complete local release assets without any remote operations."""
     paths=validate_archives(inputs,directory)
     assets=[directory/'sources.tar.gz',directory/'evidence/build-metadata.json',*paths]
     if any(not p.is_file() or p.stat().st_size>=2*1024**3 for p in assets):raise RuntimeError('Missing or oversized release asset')
+    return assets
+
+
+def stage(repo,tag,directory,preflight):
+    inputs=json.loads((directory/'images.json').read_text())
+    if preflight!={'preflight':True,'inputs':inputs}:raise RuntimeError('Successful preflight does not match these original inputs')
+    assets=validate_assets(inputs,directory)
     release=find_release(repo,tag)
     if release:
         names={a['name'] for a in release['assets']}

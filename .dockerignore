@@ -8,5 +8,8 @@
 !scripts/
 !scripts/build.py
 !scripts/publish.py
+!scripts/build_validation_image.py
+!scripts/update_proc_transfer.py
+!scripts/proc_transfer_operator.py
 **/__pycache__
 **/*.pyc

@@ -36,7 +36,12 @@ def main():
         else:
             for filename in ARCHIVES:command+=['--pattern',filename]
         subprocess.run(command,check=True)
-        if not published:restore_images(json.loads(Path('.build/images.json').read_text()),Path('.build'))
+        inputs=json.loads(Path('.build/images.json').read_text())
+        if 'probe' in inputs:
+            if 'probe-image.tar' not in names:raise RuntimeError('Original probe archive missing')
+            if not published:
+                subprocess.run(['gh','release','download',a.tag,'--pattern','probe-image.tar','--dir','.build'],check=True)
+        if not published:restore_images(inputs,Path('.build'))
     with open(os.environ['GITHUB_OUTPUT'],'a') as output:
         output.write('reuse='+str(staged).lower()+'\ncompleted='+str(published).lower()+'\n')
 

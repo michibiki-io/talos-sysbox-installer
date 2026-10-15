@@ -110,7 +110,7 @@ jobs:
         if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
         env:
           PROJECT_VERSION: ${{ steps.compute.outputs.docker_tag }}
-        run: python3 scripts/build.py --version "$PROJECT_VERSION" --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+        run: python3 scripts/build.py --version "$PROJECT_VERSION" --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" --with-probe
       - name: Registry login
         if: steps.compute.outputs.release_required == 'true'
         uses: docker/login-action@v4
@@ -147,6 +147,13 @@ jobs:
             python3 scripts/publish.py --images .build/images.json --output .build/release-images.json
           fi
           cp .build/release-images.json .build/approved-runtime-images.json
+          python3 - <<'PY'
+          import json, pathlib
+          result=json.load(open('.build/release-images.json'))
+          pathlib.Path('.build/test-images.lock.json').unlink(missing_ok=True)
+          if 'test_image_lock' in result:
+              pathlib.Path('.build/test-images.lock.json').write_text(json.dumps(result['test_image_lock'],indent=2)+'\n')
+          PY
       - name: Generate release notes
         if: steps.compute.outputs.release_required == 'true'
         env:
@@ -173,3 +180,4 @@ jobs:
           files: |
             .build/release-images.json
             .build/approved-runtime-images.json
+            .build/test-images.lock.json

@@ -5,6 +5,7 @@ import json
 import tarfile
 import tempfile
 import os
+import sys
 import subprocess
 import shutil
 import tomllib
@@ -29,6 +30,9 @@ validation=importlib.util.module_from_spec(spec);spec.loader.exec_module(validat
 spec=importlib.util.spec_from_file_location('official_sources',ROOT/'build/official_sources.py')
 official=importlib.util.module_from_spec(spec);spec.loader.exec_module(official)
 
+spec=importlib.util.spec_from_file_location('validation_packages', ROOT/'build/validation_packages.py')
+probe_packages=importlib.util.module_from_spec(spec);spec.loader.exec_module(probe_packages)
+
 def load_release(name):
     spec=importlib.util.spec_from_file_location(name,ROOT/'scripts/release'/f'{name}.py')
     mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
@@ -36,8 +40,304 @@ def load_release(name):
 
 stage=load_release('stage_release')
 reuse=load_release('reuse_inputs')
+probe_build=load('build_validation_image')
+
+class ProbePackageTests(unittest.TestCase):
+    # Observed pinned Ubuntu base and signed 20261001 snapshot metadata.
+    OLD = '1:3.1.2-2.1build1.1'
+    CANDIDATE = '1:3.1.2-2.1ubuntu0.1'
+
+    def installed(self):
+        return [{'package': name, 'architecture': arch, 'version': self.OLD,
+                 'source': 'audit', 'source_version': self.OLD}
+                for name, arch in [('libaudit-common', 'all'), ('libaudit1', 'amd64')]]
+
+    def repository(self):
+        return {(p['package'], p['architecture'], self.CANDIDATE):
+                {'source': ('audit', self.CANDIDATE), 'repository': 'signed snapshot index'}
+                for p in self.installed()}
+
+    def selected(self):
+        return probe_packages.resolve(self.installed(),
+            {p['package']: self.CANDIDATE for p in self.installed()},
+            self.repository(), {('audit', self.CANDIDATE)})
+
+    def test_inherited_audit_binaries_are_both_selected_before_source_collection(self):
+        selected = self.selected()
+        self.assertEqual(len(selected), 2)
+        self.assertTrue(all(p['version'] == self.CANDIDATE and
+                            p['source_version'] == self.CANDIDATE for p in selected))
+        # Downloading the newer source while retaining either old binary is rejected.
+        with self.assertRaisesRegex(ValueError, 'effective binary/source differs'):
+            probe_packages.verify_effective(self.installed(), selected, self.installed())
+        probe_packages.verify_effective(selected, selected, self.installed())
+
+    def test_missing_repository_candidates_and_exact_sources_fail_closed(self):
+        for candidates in ({}, {'libaudit1': '(none)'},
+                           {p['package']: self.OLD for p in self.installed()}):
+            with self.subTest(candidates=candidates), self.assertRaisesRegex(ValueError, 'no signed snapshot candidate'):
+                probe_packages.resolve(self.installed(), candidates, self.repository(), {('audit', self.CANDIDATE)})
+        with self.assertRaisesRegex(ValueError, 'no exact snapshot source'):
+            probe_packages.resolve(self.installed(), {p['package']: self.CANDIDATE for p in self.installed()},
+                                   self.repository(), {('audit', self.OLD)})
+
+    def test_source_identity_preserves_binary_rebuild_and_implicit_versions(self):
+        for source, expected in [(None, ('example', '2+b1')), ('upstream', ('upstream', '2+b1')),
+                                 ('upstream (1:2)', ('upstream', '1:2'))]:
+            record = {'Package': 'example', 'Version': '2+b1'}
+            if source: record['Source'] = source
+            self.assertEqual(probe_packages.source_identity(record), expected)
+        selected = self.selected()
+        for field, wrong in [('source', 'different'), ('source_version', self.OLD),
+                             ('version', self.OLD), ('architecture', 'arm64')]:
+            changed = [dict(p) for p in selected]; changed[0][field] = wrong
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'differs'):
+                probe_packages.verify_effective(changed, selected, self.installed())
+        with self.assertRaisesRegex(ValueError, 'removed'):
+            probe_packages.verify_effective(selected[:1], selected[:1], self.installed())
+
+    def targets(self):
+        return [{'Identifier': kind, 'Trusted': 'yes', 'Origin': 'Ubuntu', 'Codename': 'noble',
+                 'Suite': suite, 'Component': component, 'Architecture': 'amd64',
+                 'URI': f'https://snapshot.ubuntu.com/ubuntu/20261001T000000Z/dists/{suite}/{component}/'
+                        + ('source/Sources' if kind == 'Sources' else 'binary-amd64/Packages'),
+                 'Filename': f'{kind}-{suite}-{component}'}
+                for kind in ('Sources', 'Packages') for suite in ('noble', 'noble-updates', 'noble-security')
+                for component in ('main', 'universe')]
+
+    def control(self, records):
+        return '\n\n'.join('\n'.join(f'{k}: {v}' for k, v in r.items()) for r in records)
+
+    def test_unsigned_alternate_snapshot_and_incomplete_indexes_are_rejected(self):
+        targets = self.targets()
+        self.assertEqual(len(probe_packages.snapshot_targets(self.control(targets), '20261001T000000Z', 'amd64')), 12)
+        for field, wrong in [('Trusted', 'no'), ('URI', targets[0]['URI'].replace('20261001', '20261002')),
+                             ('URI', 'https://archive.ubuntu.com/ubuntu/dists/noble/main/source/Sources'),
+                             ('Origin', 'other'), ('Component', 'restricted')]:
+            changed = [dict(t) for t in targets]; changed[0][field] = wrong
+            with self.subTest(field=field, wrong=wrong), self.assertRaisesRegex(ValueError, 'outside trusted'):
+                probe_packages.snapshot_targets(self.control(changed), '20261001T000000Z', 'amd64')
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            probe_packages.snapshot_targets(self.control(targets[:-1]), '20261001T000000Z', 'amd64')
+
+    def test_normalization_installs_exact_versions_and_rechecks_added_dependencies(self):
+        before = self.installed()
+        final = self.selected()
+        dependency = {'package': 'dependency', 'architecture': 'amd64', 'version': '2+b1',
+                      'source': 'dependency-source', 'source_version': '2'}
+        repo = self.repository()
+        repo[('dependency', 'amd64', '2+b1')] = {'source': ('dependency-source', '2'), 'repository': 'signed snapshot index'}
+        sources = {('audit', self.CANDIDATE), ('dependency-source', '2')}
+        def dpkg(packages):
+            return ''.join('installed\t' + '\t'.join(p[f] for f in
+                ('package', 'architecture', 'version', 'source', 'source_version')) + '\n' for p in packages)
+        for failure in ('none', 'old-binary', 'new-source-mismatch', 'missing-added-source'):
+            effective = [dict(p) for p in final] + [dict(dependency)]
+            if failure == 'old-binary': effective[0]['version'] = self.OLD
+            if failure == 'new-source-mismatch': effective[-1]['source_version'] = 'wrong'
+            inventories = iter([dpkg(before), dpkg(effective)])
+            def output(args, **kwargs):
+                if args[0] == 'dpkg': return 'amd64\n'
+                if args[0] == 'dpkg-query': return next(inventories)
+                if args[0] == 'apt-get': return self.control(self.targets())
+                self.assertEqual(args[:4], ['apt-cache', '-o', 'Dir::State::status=/dev/null', 'policy'])
+                self.assertIn('Dir::State::status=/dev/null', args)
+                return ''.join(f"{name}:\n  Candidate: {repo_version}\n" for name, repo_version in
+                    [('libaudit-common', self.CANDIDATE), ('libaudit1', self.CANDIDATE), ('dependency', '2+b1')])
+            available = sources - {('dependency-source', '2')} if failure == 'missing-added-source' else sources
+            with self.subTest(failure=failure), mock.patch.object(probe_packages.subprocess, 'check_output', side_effect=output), \
+                 mock.patch.object(probe_packages, 'repository_inventory', return_value=(repo, available)), \
+                 mock.patch.object(probe_packages.subprocess, 'run') as install:
+                if failure == 'none':
+                    result = probe_packages.normalize('20261001T000000Z')
+                    self.assertEqual(result['before'], before)
+                    self.assertEqual(len(result['effective']), 3)
+                else:
+                    with self.assertRaises(ValueError): probe_packages.normalize('20261001T000000Z')
+                self.assertEqual(install.call_args.args[0], ['sh', '/work/apt_retry.sh', 'install', '-y',
+                    '--no-install-recommends', '--no-remove', 'libaudit-common:all=' + self.CANDIDATE,
+                    'libaudit1:amd64=' + self.CANDIDATE])
+
+    def test_preflight_unavailable_candidate_or_source_prevents_any_install(self):
+        installed = ''.join('installed\t' + '\t'.join(p[f] for f in
+            ('package', 'architecture', 'version', 'source', 'source_version')) + '\n'
+            for p in self.installed())
+        for candidate, sources in [(self.OLD, {('audit', self.CANDIDATE)}), (self.CANDIDATE, set())]:
+            def output(args, **kwargs):
+                if args[0] == 'dpkg': return 'amd64\n'
+                if args[0] == 'dpkg-query': return installed
+                if args[0] == 'apt-get': return self.control(self.targets())
+                return ''.join(f"{p['package']}:\n  Candidate: {candidate}\n" for p in self.installed())
+            with self.subTest(candidate=candidate), \
+                 mock.patch.object(probe_packages.subprocess, 'check_output', side_effect=output), \
+                 mock.patch.object(probe_packages, 'repository_inventory', return_value=(self.repository(), sources)), \
+                 mock.patch.object(probe_packages.subprocess, 'run') as install:
+                with self.assertRaises(ValueError): probe_packages.normalize('20261001T000000Z')
+                install.assert_not_called()
+
+    def test_conflicting_binary_source_identity_is_rejected(self):
+        targets = [{'Identifier': 'Packages', 'URI': 'signed snapshot index', 'Filename': f}
+                   for f in ('first', 'second')]
+        def read(filename):
+            return self.control([{'Package': 'example', 'Architecture': 'amd64', 'Version': '2+b1',
+                                  'Source': 'upstream (2)' if filename == 'first' else 'wrong (2)'}])
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            probe_packages.repository_inventory(targets, read)
+
+    def test_source_batch_keeps_all_exact_versions_and_failure_prevents_completion(self):
+        script = compile((ROOT/'build/validation_image.py').read_text(), 'validation_image.py', 'exec')
+        effective = self.selected() + [
+            {'package': 'example', 'source': 'example-source', 'source_version': '2+b1'},
+            {'package': 'example-old', 'source': 'example-source', 'source_version': '1:1.0'}]
+        inventory = {'effective': effective}
+        expected = ['audit=' + self.CANDIDATE, 'example-source=1:1.0', 'example-source=2+b1']
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w:gz') as tf:
+            member = tarfile.TarInfo('bubblewrap/COPYING'); member.size = 7
+            tf.addfile(member, io.BytesIO(b'license'))
+        data = archive.getvalue()
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
+                root = Path(work)
+                def image_path(value):
+                    return root / str(value).lstrip('/')
+                for directory in ('work', 'opt/proc-transfer', 'usr/bin'):
+                    (root/directory).mkdir(parents=True)
+                lock = {'apt_snapshot': '20261001T000000Z', 'validation_sources': {'bubblewrap': {
+                    'version': '0.12.0', 'url': 'https://example.invalid/bubblewrap.tar.gz',
+                    'sha256': hashlib.sha256(data).hexdigest()}}}
+                (root/'work/versions.lock.json').write_text(json.dumps(lock))
+                for name in ('bwrap', 'python3', 'cc', 'nsenter'):
+                    (root/'usr/bin'/name).write_bytes(name.encode())
+                def notices(src, dst, **kwargs):
+                    dst.mkdir(parents=True); (dst/'copyright').write_text('package license')
+                def command(args, **kwargs):
+                    if args[0] != 'sh': return
+                    self.assertEqual(args[:5], ['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only'])
+                    self.assertEqual(args[5:], expected)
+                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True})
+                    (kwargs['cwd']/'audit.dsc').write_bytes(b'partial source')
+                    if failure: raise subprocess.CalledProcessError(100, args)
+                    (kwargs['cwd']/'example.dsc').write_bytes(b'remaining source')
+                with mock.patch('pathlib.Path', side_effect=image_path), \
+                     mock.patch.object(sys, 'version_info', (3, 12)), \
+                     mock.patch.dict(sys.modules, {'validation_packages': probe_packages}), \
+                     mock.patch.object(probe_packages, 'normalize', return_value=inventory), \
+                     mock.patch('urllib.request.urlopen', return_value=io.BytesIO(data)), \
+                     mock.patch.object(shutil, 'copytree', side_effect=notices), \
+                     mock.patch.object(shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                     mock.patch.object(subprocess, 'check_output', side_effect=lambda args, **kw:
+                         {'bwrap': 'bubblewrap 0.12.0', 'python3': 'Python 3.12', 'cc': 'cc fixture'}[args[0]]), \
+                     mock.patch.object(subprocess, 'run', side_effect=command) as run:
+                    if failure:
+                        with self.assertRaises(subprocess.CalledProcessError) as raised: exec(script, {})
+                        self.assertEqual(raised.exception.returncode, 100)
+                    else:
+                        exec(script, {})
+                    self.assertEqual(sum(call.args[0][0] == 'sh' for call in run.call_args_list), 1)
+                sources = root/'opt/validation-sources'
+                self.assertEqual(json.loads((sources/'binary-packages.json').read_text()), inventory)
+                self.assertEqual(json.loads((sources/'packages.json').read_text()),
+                                 [['audit', self.CANDIDATE], ['example-source', '1:1.0'], ['example-source', '2+b1']])
+                self.assertEqual((root/'opt/validation-licenses/BUBBLEWRAP-COPYING').read_bytes(), b'license')
+                manifest = sources/'source-files.sha256.json'
+                self.assertEqual(manifest.exists(), not failure)
+                self.assertEqual((root/'opt/proc-transfer/image-versions.json').exists(), not failure)
+                if not failure:
+                    hashes = json.loads(manifest.read_text())
+                    self.assertEqual(hashes, {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                             for p in sources.iterdir() if p != manifest})
 
 class BuildTests(unittest.TestCase):
+    def probe_inputs(self, root):
+        inputs = self.original_archives(root)
+        image = 'ghcr.io/example/talos-sysbox-proc-transfer-probe:v0.1.0-talos-v1.12.6'
+        build.retag_archive(root/'extension.tar', root/'probe-image.tar', image)
+        config = build.archive_config_digest(root/'probe-image.tar')
+        inputs['probe'] = {'image': image, 'test_image_lock': {'schema_version': 1,
+            'test_images': {'proc_transfer_probe': {'local_tag': image, 'oci_digest': 'sha256:local',
+            'config_digest': config, 'anonymous_pull_verified': False, 'distribution': 'local-archive-import-only'}}}}
+        inputs['image_config_digests'][image] = config
+        inputs['image_archives'][image] = {'file': 'probe-image.tar', 'sha256': build.file_sha256(root/'probe-image.tar')}
+        (root/'images.json').write_text(json.dumps(inputs))
+        return inputs
+
+    def test_anonymous_proof_checks_original_manifest_config_and_every_blob(self):
+        class Response(io.BytesIO):
+            def __init__(self, data=b'', headers=None, status=200):
+                super().__init__(data); self.headers=headers or {}; self.status=status
+        manifest=json.dumps({'config': {'digest': 'sha256:config', 'size': 2},
+                             'layers': [{'digest': 'sha256:layer', 'size': 3}]}).encode()
+        sha='sha256:'+hashlib.sha256(manifest).hexdigest()
+        for failure in ('none', 'manifest', 'config', 'blob'):
+            calls=[]
+            def request(url, **kwargs):
+                calls.append(url)
+                if isinstance(url, str): return Response(b'{"token":"anonymous"}')
+                if '/manifests/' in url.full_url:
+                    return Response(manifest, {'Docker-Content-Digest': 'sha256:wrong' if failure=='manifest' else sha})
+                size = 2 if url.full_url.endswith('sha256:config') else 3
+                return Response(headers={'Content-Length': str(size)}, status=403 if failure=='blob' else 200)
+            with self.subTest(failure=failure), mock.patch.object(publish.urllib.request, 'urlopen', side_effect=request):
+                if failure=='none':
+                    self.assertEqual(publish.anonymous_digest('ghcr.io/example/probe:fixed', expected_config='sha256:config'), sha)
+                    self.assertEqual(len(calls), 4)
+                    self.assertTrue(all(call.get_method()=='HEAD' for call in calls[-2:]))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        publish.anonymous_digest('ghcr.io/example/probe:fixed', expected_config='sha256:other' if failure=='config' else 'sha256:config')
+
+    def test_optional_probe_stages_and_restores_original_archive_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'find_release', return_value=None), mock.patch.object(stage.subprocess, 'run') as run:
+                stage.stage('example/repo', 'v0.1.0', root, {'preflight': True, 'inputs': inputs})
+                self.assertIn(str(root/'probe-image.tar'), run.call_args_list[1].args[0])
+                self.assertIn(str(root/'sources.tar.gz'), run.call_args_list[1].args[0])
+                self.assertEqual(run.call_args_list[-1].args[0][-1], str(root/'images.json'))
+            with mock.patch.object(reuse.subprocess, 'run') as run:
+                reuse.restore_images(inputs, root)
+                self.assertEqual(run.call_args_list[-1].args[0], ['docker', 'load', '-i', str(root/'probe-image.tar')])
+            (root/'probe-image.tar').write_bytes(b'corrupt')
+            with mock.patch.object(reuse.subprocess, 'run') as run:
+                with self.assertRaises(RuntimeError): reuse.restore_images(inputs, root)
+                run.assert_not_called()
+
+    def test_probe_public_lock_only_after_all_anonymous_proofs_and_immutable_preflight(self):
+        with tempfile.TemporaryDirectory() as work:
+            inputs = self.probe_inputs(Path(work))
+            def inspect(args, **kwargs):
+                return '[]' if args[1] == 'info' else inputs['image_config_digests'][args[-1]]
+            with mock.patch.object(publish, 'existing_manifest', return_value=None), mock.patch.object(publish.subprocess, 'check_output', side_effect=inspect), mock.patch.object(publish.subprocess, 'run') as push, mock.patch.object(publish, 'anonymous_digest', return_value='sha256:'+'a'*64) as proof:
+                result = publish.publish_images(inputs)
+                self.assertEqual(push.call_count, 4); self.assertEqual(proof.call_count, 4)
+                public = result['test_image_lock']['test_images']['proc_transfer_probe']
+                self.assertEqual(public['image'], inputs['probe']['image'].split(':')[0]+'@sha256:'+'a'*64)
+                self.assertTrue(public['anonymous_pull_verified']); self.assertEqual(public['distribution'], 'public-registry')
+                self.assertNotIn('local_tag', public)
+                self.assertFalse(inputs['probe']['test_image_lock']['test_images']['proc_transfer_probe']['anonymous_pull_verified'])
+                proof.side_effect = ['sha256:'+'a'*64]*3 + [RuntimeError('anonymous blob denied')]
+                with self.assertRaisesRegex(RuntimeError, 'blob denied'): publish.publish_images(inputs)
+            with mock.patch.object(publish, 'existing_manifest', side_effect=[None]*3+[{'config': {'digest': 'sha256:wrong'}}]), mock.patch.object(publish.subprocess, 'check_output', side_effect=inspect), mock.patch.object(publish.subprocess, 'run') as push:
+                with self.assertRaisesRegex(RuntimeError, 'Immutable'): publish.publish_images(inputs)
+                push.assert_not_called()
+
+    def test_probe_source_offering_is_opt_in_and_complete_before_archive(self):
+        with tempfile.TemporaryDirectory() as work:
+            out = Path(work); (out/'evidence/sources').mkdir(parents=True)
+            (out/'evidence/project').mkdir(); lock=out/'evidence/project/versions.lock.json'; lock.write_text('{}')
+            (out/'evidence/build-metadata.json').write_text('{}')
+            with self.assertRaisesRegex(RuntimeError, 'probe corresponding'): build.source_archive(out, lock, include_probe=True)
+            source=out/'validation/corresponding-source'; source.mkdir(parents=True)
+            (source/'package.dsc').write_text('fixed source')
+            (out/'validation/test-images.lock.json').write_text('{}')
+            build.source_archive(out, lock, include_probe=True)
+            with tarfile.open(out/'sources.tar.gz') as archive:
+                self.assertEqual(archive.extractfile('sources/probe/package.dsc').read(), b'fixed source')
+                self.assertIn('probe-build-inputs.json', archive.getnames())
+            build.source_archive(out, lock)
+            with tarfile.open(out/'sources.tar.gz') as archive: self.assertNotIn('sources/probe', archive.getnames())
+
     def test_provenance_bytes_ignore_nested_dictionary_enumeration_order(self):
         original={'source_files':{'second':'b','first':'a'},'inputs':{'talos':'1.12.6','architecture':'amd64'}}
         reordered={'inputs':dict(reversed(list(original['inputs'].items()))),'source_files':dict(reversed(list(original['source_files'].items())))}
@@ -57,6 +357,143 @@ class BuildTests(unittest.TestCase):
         (directory/'sources.tar.gz').write_bytes(b'sources')
         (directory/'evidence').mkdir();(directory/'evidence/build-metadata.json').write_text('{}')
         return inputs
+
+    def test_offline_assets_validate_four_originals_without_remote_calls(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run, mock.patch.object(stage.subprocess, 'check_output') as output:
+                assets = stage.validate_assets(inputs, root)
+                self.assertEqual([p.name for p in assets], ['sources.tar.gz', 'build-metadata.json', *stage.ARCHIVES, 'probe-image.tar'])
+                (root/'probe-image.tar').write_bytes(b'corrupt')
+                with self.assertRaisesRegex(RuntimeError, 'checksum'):
+                    stage.validate_assets(inputs, root)
+                lookup.assert_not_called(); run.assert_not_called(); output.assert_not_called()
+
+    def test_offline_assets_enforce_strict_size_boundary_for_every_asset(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            assets = stage.validate_assets(inputs, root)
+            original_stat = Path.stat
+            for target in assets:
+                for size in (2*1024**3 - 1, 2*1024**3, 2*1024**3 + 1):
+                    def stat(path, *args, **kwargs):
+                        result = original_stat(path, *args, **kwargs)
+                        if path == target:
+                            fields = list(result); fields[6] = size
+                            return os.stat_result(fields)
+                        return result
+                    with self.subTest(asset=target.name, size=size), mock.patch.object(Path, 'stat', stat), mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run:
+                        if size < 2*1024**3:
+                            self.assertEqual(stage.validate_assets(inputs, root), assets)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, 'Missing or oversized'):
+                                stage.validate_assets(inputs, root)
+                        lookup.assert_not_called(); run.assert_not_called()
+            for target in assets[:2]:
+                content = target.read_bytes(); target.unlink()
+                with self.subTest(missing=target.name), self.assertRaisesRegex(RuntimeError, 'Missing or oversized'):
+                    stage.validate_assets(inputs, root)
+                target.write_bytes(content)
+
+    def test_stage_uses_shared_asset_gate_before_remote_operations(self):
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); inputs = self.probe_inputs(root)
+            with mock.patch.object(stage, 'validate_assets', side_effect=RuntimeError('asset gate')) as gate, mock.patch.object(stage, 'find_release') as lookup, mock.patch.object(stage.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'asset gate'):
+                    stage.stage('example/repo', 'v0.1.0', root, {'preflight': True, 'inputs': inputs})
+                gate.assert_called_once_with(inputs, root)
+                lookup.assert_not_called(); run.assert_not_called()
+
+    def probe_layer_archive(self, archive, secondary=None, *, config_count=None, history_count=None, extra_layer=False):
+        def layer_bytes(members):
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode='w') as layer:
+                for name, kind, content in members:
+                    member = tarfile.TarInfo(name); member.type = kind
+                    if kind == tarfile.REGTYPE:
+                        member.size = len(content)
+                    elif kind in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+                        member.linkname = content.decode()
+                    layer.addfile(member, io.BytesIO(content) if member.isreg() else None)
+            return buf.getvalue()
+        payload = layer_bytes([('opt/tiny', tarfile.REGTYPE, b'current payload')])
+        layers = [payload] if secondary is None else [payload, layer_bytes(secondary)]
+        if extra_layer:
+            layers.append(layer_bytes([]))
+        names = [f'layer{i}.tar' for i in range(len(layers))]
+        diff_ids = ['sha256:' + hashlib.sha256(data).hexdigest() for data in layers]
+        if config_count is not None:
+            diff_ids = (diff_ids * 3)[:config_count]
+        config = {'rootfs': {'type': 'layers', 'diff_ids': diff_ids},
+                  'history': [{'created_by': 'WORKDIR /home/probe'}] *
+                             (len(layers) if history_count is None else history_count)}
+        with tarfile.open(archive, 'w') as tf:
+            for name, data in [('manifest.json', json.dumps([{'Config': 'config.json', 'Layers': names}]).encode()),
+                               ('config.json', json.dumps(config).encode()), *zip(names, layers)]:
+                member = tarfile.TarInfo(name); member.size = len(data)
+                tf.addfile(member, io.BytesIO(data))
+
+    def test_probe_export_verifies_payload_and_workdir_tar_entries(self):
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            for directories in (None, [], [('home/', tarfile.DIRTYPE, b''),
+                                            ('home/probe/', tarfile.DIRTYPE, b'')]):
+                with self.subTest(directories=directories):
+                    self.probe_layer_archive(archive, directories)
+                    proof = probe_build.verify_flattened_archive(archive)
+                    self.assertEqual(proof['rootfs_layer_count'], 1 if directories is None else 2)
+                    self.assertEqual(proof['filesystem_payload_layer_count'], 1)
+                    self.assertEqual(proof['workdir_metadata_layer_count'], 0 if directories is None else 1)
+                    self.assertEqual(proof['workdir_metadata_directories'],
+                                     ['home', 'home/probe'] if directories else [])
+                    self.assertEqual(proof['layer_verification'], 'sha256-diffids-and-tar-entries')
+
+    def test_probe_export_rejects_all_secondary_non_workdir_content(self):
+        cases = [('usr/lib/old-libaudit.so', tarfile.REGTYPE, b'old library'),
+                 ('usr/local/go/bin/go', tarfile.REGTYPE, b'old SDK'),
+                 ('home/probe/empty', tarfile.REGTYPE, b''),
+                 ('home/probe', tarfile.REGTYPE, b''),
+                 ('home/probe/.wh.old', tarfile.REGTYPE, b''),
+                 ('home/.wh..wh..opq', tarfile.REGTYPE, b''),
+                 ('home/probe', tarfile.SYMTYPE, b'/usr/local/go'),
+                 ('home/probe', tarfile.LNKTYPE, b'usr/lib/old-libaudit.so'),
+                 ('other', tarfile.DIRTYPE, b''),
+                 ('/', tarfile.DIRTYPE, b''),
+                 ('../home/probe', tarfile.DIRTYPE, b''),
+                 ('/home/probe', tarfile.DIRTYPE, b''),
+                 ('home/../home/probe', tarfile.DIRTYPE, b''),
+                 ('home//probe', tarfile.DIRTYPE, b''),
+                 ('home/probe', tarfile.FIFOTYPE, b'')]
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            for member in cases:
+                with self.subTest(member=member):
+                    self.probe_layer_archive(archive, [member])
+                    with self.assertRaises(RuntimeError):
+                        probe_build.verify_flattened_archive(archive)
+
+    def test_probe_export_rejects_incoherent_counts_and_diffids(self):
+        with tempfile.TemporaryDirectory() as work:
+            archive = Path(work)/'probe.tar'
+            self.probe_layer_archive(archive, [], extra_layer=True)
+            with self.assertRaisesRegex(RuntimeError, 'at most one WORKDIR'):
+                probe_build.verify_flattened_archive(archive)
+            for count in (0, 1, 3):
+                self.probe_layer_archive(archive, [], config_count=count)
+                with self.subTest(config_count=count), self.assertRaises(RuntimeError):
+                    probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [('home', tarfile.DIRTYPE, b''),
+                                               ('home', tarfile.DIRTYPE, b'')])
+            with self.assertRaisesRegex(RuntimeError, 'duplicate WORKDIR'):
+                probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [], history_count=1)
+            with self.assertRaisesRegex(RuntimeError, 'incoherent'):
+                probe_build.verify_flattened_archive(archive)
+            self.probe_layer_archive(archive, [])
+            data = archive.read_bytes().replace(b'current payload', b'changed payload')
+            archive.write_bytes(data)
+            with self.assertRaisesRegex(RuntimeError, 'diff ID mismatch'):
+                probe_build.verify_flattened_archive(archive)
 
     def test_preflight_does_not_push_or_check_anonymous_access(self):
         with tempfile.TemporaryDirectory() as d:
@@ -130,7 +567,7 @@ class BuildTests(unittest.TestCase):
         images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ['extension','standard','vmware']]
         inputs={'extension':{'image':images[0]},'installers':[{'image':i} for i in images[1:]],'image_config_digests':{i:'sha256:config' for i in images}}
         events=[]
-        def anonymous(image):
+        def anonymous(image, **kwargs):
             events.append(('anonymous',image))
             raise publish.urllib.error.HTTPError(image,403,'private package',{},None)
         with mock.patch.object(publish,'existing_manifest',return_value=None),mock.patch.object(publish.subprocess,'check_output',side_effect=lambda args,**kw:'[]' if args[1]=='info' else 'sha256:config'),mock.patch.object(publish.subprocess,'run',side_effect=lambda args,**kw:events.append(('push',args[-1]))),mock.patch.object(publish,'anonymous_digest',side_effect=anonymous):
