@@ -11,11 +11,13 @@ from pathlib import Path
 REPOSITORY = 'https://github.com/michibiki-io/sysbox-proc-transfer'
 CONTRACT = 'proc-transfer-v1-thread-pidfd'
 COMPONENTS = {'root': 'sysbox', 'fs': 'sysbox-fs', 'runc': 'sysbox-runc',
-              'ipc': 'sysbox-ipc', 'libs': 'sysbox-libs'}
+              'ipc': 'sysbox-ipc', 'libs': 'sysbox-libs', 'fuse': 'sysbox-fs/bazil'}
+PRODUCTION_INPUTS = {'helper/proc-mount-helper.c', 'patches/proc-transfer.patch'}
 REQUIRED = {'build/sources.lock.json', 'helper/proc-mount-helper.c',
             'patches/proc-transfer.patch', 'LICENSE', 'LICENSES/Apache-2.0.txt',
             'THIRD_PARTY_NOTICES.md', 'tests/upstream/proc_policy_test.go',
-            'tests/static/test_lifecycle.py', 'tests/unit/lifecycle.c',
+            'tests/static/test_lifecycle.py', 'tests/static/test_proc_verifier.py',
+            'tests/unit/proc-verifier.c', 'tests/unit/lifecycle.c',
             'tests/unit/helper-checkpoint.c', 'tests/unit/helper-liveness.c',
             'tests/runtime/verify.sh', 'tests/runtime/verify.c',
             'tests/runtime/thread-proc.c', 'tests/runtime/verify-sys.py',
@@ -98,13 +100,14 @@ def verify_manifest(root, versions):
     for name, component in COMPONENTS.items():
         spec = manifest['components'][name]
         downstream = versions['sources']['sysbox'] if name == 'root' else versions['sysbox_components'][component]
-        if spec != {'repository': 'https://github.com/nestybox/' + component + '.git', 'revision': downstream['commit']}:
+        repository = 'fuse' if name == 'fuse' else component
+        if spec != {'repository': 'https://github.com/nestybox/' + repository + '.git', 'revision': downstream['commit']}:
             raise ValueError('Sysbox component revision/repository mismatch: ' + name)
-    if not {'helper/proc-mount-helper.c', 'patches/proc-transfer.patch'} <= set(manifest['source_sha256']):
+    if not PRODUCTION_INPUTS <= set(manifest['source_sha256']):
         raise ValueError('upstream manifest lacks production input hashes')
     files = inventory(root)
     for name, digest in manifest['source_sha256'].items():
-        if name not in files or sha256(root / name) != digest:
+        if not re.fullmatch('[0-9a-f]{64}', digest) or name not in files or files[name] != digest:
             raise ValueError('upstream source manifest hash mismatch: ' + name)
     # This adapter supports the reviewed FD/argument ABI only. A new upstream
     # contract requires code review, not just regeneration of checksums.
@@ -123,6 +126,13 @@ def verify_manifest(root, versions):
     if set(changed) != allowed:
         raise ValueError('unsupported patch scope')
     return manifest
+
+
+def verify_production_inputs(root, baseline):
+    """Candidate updates may refresh tests, never silently change production."""
+    for name in sorted(PRODUCTION_INPUTS):
+        if sha256(root / name) != baseline['input_sha256'][name]:
+            raise ValueError('candidate changes reviewed production input: ' + name)
 
 
 def fetch(lock, archive, root, versions):

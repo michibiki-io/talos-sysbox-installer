@@ -36,7 +36,7 @@ def render(lock, node, namespace, token):
                                          'capabilities': {'drop': ['ALL']},
                                          'seccompProfile': {'type': 'Unconfined'}},
                                        'resources': {'requests': {'cpu': '100m', 'memory': '128Mi'}, 'limits': {'cpu': '2', 'memory': '1Gi'}}}]}}
-    paths = ['/usr/local', '/run/containerd', '/system/run/containerd']
+    paths = ['/usr/local', '/run/containerd']
     trusted = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'proc-transfer-launcher', 'namespace': namespace},
                'spec': {**common, 'hostPID': True, 'hostUsers': True,
                         'containers': [{'name': 'launcher', 'image': image, 'imagePullPolicy': pull_policy,
