@@ -15,7 +15,8 @@ PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
 VALIDATION_ONLY = ('helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint',
                    'checkpoint-sysfs', 'sysfs-failure-helper', 'thread-sysfs',
                    'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'sysfs_runtime.py',
-                   'sysfs-failures.py', 'sysfs-dentry-protection.py')
+                   'sysfs-failures.py', 'sysfs-dentry-protection.py', 'sysfs_oracle.py',
+                   'test_sysfs_oracle.py')
 COMPONENTS = {'root': 'sysbox', 'fs': 'sysbox-fs', 'runc': 'sysbox-runc',
               'ipc': 'sysbox-ipc', 'libs': 'sysbox-libs', 'fuse': 'sysbox-fs/bazil'}
 PRODUCTION_INPUTS = {'helper/proc-mount-helper.c', 'patches/proc-transfer.patch',
@@ -38,9 +39,11 @@ REQUIRED |= PRODUCTION_INPUTS | {
     'tests/runtime/sysfs-interleave.py',
     'tests/runtime/sysfs-network.py',
     'tests/runtime/sysfs-write-policy.py',
+    'tests/runtime/sysfs_oracle.py',
     'tests/runtime/thread-sysfs.c',
     'tests/static/test_contracts.py',
     'tests/static/test_sysfs.py',
+    'tests/static/test_sysfs_oracle.py',
     'tests/unit/sysfs-checkpoint.c',
     'tests/unit/sysfs-failure-helper.c',
     'tests/unit/sysfs-liveness.c',

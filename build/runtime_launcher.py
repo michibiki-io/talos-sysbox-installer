@@ -25,12 +25,13 @@ PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
 VALIDATION_BINARIES = ('ctr', 'helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint', 'checkpoint-sysfs', 'thread-sysfs', 'sysfs-failure-helper')
 REQUIRED_ARTIFACTS = {'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'ctr',
                       *VALIDATION_BINARIES, 'sysfs_runtime.py', 'upstream-results.json',
-                      *('runtime/' + name for name in ('verify.sh', 'verify.c', 'thread-proc.c',
+                      *(prefix + name for prefix in ('runtime/', 'oracle/tests/runtime/')
+                        for name in ('verify.sh', 'verify.c', 'thread-proc.c',
                         'verify-sys.py', 'helper-rejections.py', 'checkpoints.py',
                         'checkpoint-requester.c', 'stress-proc.py', 'thread-sysfs.c', 'checkpoint-sysfs.c',
                         'sysfs-network.py', 'sysfs-interleave.py', 'sysfs-write-policy.py',
-                        'sysfs-failures.py', 'sysfs-dentry-protection.py')),
-                      'oracle/tests/runtime/sysfs-network.py', 'oracle/tests/runtime/sysfs-interleave.py'}
+                        'sysfs-failures.py', 'sysfs-dentry-protection.py', 'sysfs_oracle.py')),
+                      'oracle/tests/static/test_sysfs_oracle.py'}
 
 
 def digest(path):
