@@ -417,6 +417,45 @@ class OperatorContracts(unittest.TestCase):
             mapping.write_text('0 0 4294967295\n')
             with self.assertRaises(ValueError): launcher.mapped(mapping, 1001)
 
+    def test_probe_process_root_oracle_integrity_with_valid_launcher_payload(self):
+        launcher = self.module('probe_oracle_launcher', 'build/runtime_launcher.py')
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); payload = root / 'payload'; proc = root / 'proc/123'
+            values = {name: name.encode() for name in launcher.REQUIRED_ARTIFACTS | {'oracle/additional-input.txt'}}
+            for name in launcher.VALIDATION_BINARIES:
+                values[name] = b'\x7fELF\x02\x01' + b'\0' * 12 + b'\x3e\0'
+            for name, value in values.items():
+                path = payload / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+            lock = {'schema_version': 1, 'architecture': 'amd64', 'contract': launcher.CONTRACT,
+                    'build_profile': p.BUILD_PROFILE, 'launcher_python_minimum': '3.12', 'revision': 'a' * 40,
+                    'source_lock_sha256': 'b' * 64,
+                    'artifact_sha256': {name: hashlib.sha256(value).hexdigest() for name, value in values.items()}}
+            (payload / 'artifacts.lock.json').write_text(json.dumps(lock))
+            artifacts = launcher.verify_artifacts(payload)
+            for name, value in values.items():
+                if name.startswith('oracle/'):
+                    path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+                    path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+            launcher.verify_oracle_root(proc, artifacts)
+            # Every inventoried oracle copy is checked, including inputs beyond
+            # the required module and static test; launcher copies stay valid.
+            for name in sorted(name for name in values if name.startswith('oracle/')):
+                path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+                for failure in ('changed', 'missing', 'symlink'):
+                    with self.subTest(name=name, failure=failure):
+                        if failure == 'changed': path.write_bytes(b'tampered')
+                        elif failure == 'missing': path.unlink()
+                        else:
+                            path.unlink(); path.symlink_to(payload / name)
+                        launcher.verify_artifacts(payload)
+                        if failure == 'missing':
+                            with self.assertRaises(FileNotFoundError): launcher.verify_oracle_root(proc, artifacts)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'self-contained upstream oracle mismatch'):
+                                launcher.verify_oracle_root(proc, artifacts)
+                        path.unlink(missing_ok=True); path.write_bytes(values[name])
+            launcher.verify_oracle_root(proc, artifacts)
+
     def test_manifest_renderer_keeps_actual_probe_filter_and_dedicated_trust_scope(self):
         operator = self.module('operator', 'scripts/proc_transfer_operator.py')
         lock = {'schema_version': 1, 'build_profile': p.BUILD_PROFILE, 'test_images': {'proc_transfer_probe': {

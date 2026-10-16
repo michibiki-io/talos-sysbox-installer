@@ -97,6 +97,14 @@ def verify_artifacts(base):
     return lock
 
 
+def verify_oracle_root(proc, artifacts):
+    for name, sha in artifacts['artifact_sha256'].items():
+        if name.startswith('oracle/'):
+            path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+            if path.is_symlink() or digest(path) != sha:
+                raise ValueError('self-contained upstream oracle mismatch')
+
+
 def verify_backend(backend, metadata, host, proc_root=Path('/proc')):
     if digest(proc_root / str(backend) / 'exe') != metadata['binary_sha256']['sysbox-fs']:
         raise ValueError('running fs executable differs from downstream build')
@@ -198,11 +206,7 @@ def run(args):
             relative = Path(name)
             if not relative.is_absolute() or '..' in relative.parts or digest(proc / 'root' / str(relative).lstrip('/')) != sha:
                 raise ValueError('probe binary differs from fixed image build')
-        for name, sha in artifacts['artifact_sha256'].items():
-            if name.startswith('oracle/'):
-                path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
-                if path.is_symlink() or digest(path) != sha:
-                    raise ValueError('self-contained upstream oracle mismatch')
+        verify_oracle_root(proc, artifacts)
         uid, gid = mapped(proc / 'uid_map', 1001), mapped(proc / 'gid_map', 1001)
         status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
         if int(status['Uid'].split()[1]) != uid or int(status['Gid'].split()[1]) != gid or int(status['Seccomp']) != 2 or int(status['CapEff'], 16) != 0 or int(status['NoNewPrivs']) != 1:
