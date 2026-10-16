@@ -241,7 +241,7 @@ def build_validation(integration, source_root, env):
         sources = [str(path.relative_to(cwd)) for path in sorted((cwd / relative).glob('*.go')) if not path.name.endswith('_test.go')]
         sources += [relative + '/' + name for name in fixtures]
         checks.append((['go', 'test', '-v', *sources, '-run', selection, '-count=1'], cwd, 180))
-    for name in ('test_sysfs.py', 'test_contracts.py'):
+    for name in ('test_sysfs.py', 'test_sysfs_oracle.py', 'test_contracts.py'):
         # Packaging contracts that require upstream git inventory are not selected.
         selection = (['tests.static.test_contracts.Contracts.test_baseline_and_build_pins',
                       'tests.static.test_contracts.Contracts.test_script_syntax'] if name == 'test_contracts.py'
@@ -260,10 +260,10 @@ def build_validation(integration, source_root, env):
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
         results.append({'command': command, 'status': 'passed' if result.returncode == 0 else 'failed',
                         'conditional_skips': result.stdout.count('--- SKIP:') + result.stderr.count('skipped')})
+        (validation / 'upstream-results.json').write_text(stable_json(results))
         if result.returncode:
             print(result.stdout, result.stderr, flush=True)
             raise RuntimeError('selected upstream regression failed')
-    (validation / 'upstream-results.json').write_text(stable_json(results))
     record = {'schema_version': 1, 'revision': integration_record['lock']['revision'],
               'build_profile': proc_transfer.BUILD_PROFILE, 'architecture': 'amd64', 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
               'source_lock_sha256': proc_transfer.sha256(Path('/work/project/build/proc-transfer.lock.json')),

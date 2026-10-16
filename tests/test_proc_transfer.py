@@ -35,9 +35,11 @@ class Integration(unittest.TestCase):
             with self.subTest(name=name):
                 changed = copy.deepcopy(self.lock); changed[name] = value
                 with self.assertRaises(ValueError): self.load(changed)
-        changed = copy.deepcopy(self.lock)
-        del changed['input_sha256']['helper/proc-mount-helper.c']
-        with self.assertRaises(ValueError): self.load(changed)
+        for missing in ('helper/proc-mount-helper.c', 'tests/runtime/sysfs_oracle.py',
+                        'tests/static/test_sysfs_oracle.py'):
+            changed = copy.deepcopy(self.lock)
+            del changed['input_sha256'][missing]
+            with self.subTest(missing=missing), self.assertRaises(ValueError): self.load(changed)
         changed = copy.deepcopy(self.lock); changed['input_sha256']['../escape'] = 'a' * 64
         with self.assertRaises(ValueError): self.load(changed)
 
@@ -111,7 +113,7 @@ class Integration(unittest.TestCase):
 
     def test_candidate_updater_checks_baseline_actual_bytes_and_preserves_full_inventory(self):
         updater = OperatorContracts.module('updater', 'scripts/update_proc_transfer.py')
-        for change in ('tests-only', 'helper', 'patch', 'missing-required', 'fuse-pin', 'source-hash', 'contract', 'sysfs-helper', 'sysfs-patch', 'unknown-production'):
+        for change in ('tests-only', 'helper', 'patch', 'missing-required', 'fuse-pin', 'source-hash', 'contract', 'sysfs-helper', 'sysfs-patch', 'unknown-production', 'missing-oracle', 'missing-oracle-test'):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as work:
                 root = Path(work); source = root / 'source'; source.mkdir()
                 manifest = self.fixture(source)
@@ -128,8 +130,10 @@ class Integration(unittest.TestCase):
                           'tests-only': 'tests/runtime/verify.c', 'missing-required': 'tests/runtime/verify.c',
                           'fuse-pin': 'tests/runtime/verify.c', 'source-hash': 'tests/runtime/verify.c',
                           'contract': 'tests/runtime/verify.c', 'sysfs-helper': 'helper/sysfs-mount-helper.c',
-                          'sysfs-patch': 'patches/sysfs-transfer.patch', 'unknown-production': 'tests/runtime/verify.c'}[change]
-                if change == 'missing-required': (source / target).unlink()
+                          'sysfs-patch': 'patches/sysfs-transfer.patch', 'unknown-production': 'tests/runtime/verify.c',
+                          'missing-oracle': 'tests/runtime/sysfs_oracle.py',
+                          'missing-oracle-test': 'tests/static/test_sysfs_oracle.py'}[change]
+                if change in ('missing-required', 'missing-oracle', 'missing-oracle-test'): (source / target).unlink()
                 else: (source / target).write_text((source / target).read_text() + '\n/* refreshed */')
                 for name in manifest['source_sha256']: manifest['source_sha256'][name] = p.sha256(source / name)
                 if change == 'unknown-production':
@@ -173,63 +177,95 @@ class Integration(unittest.TestCase):
         # Load only this function: importing assemble would read /work inputs.
         tree = ast.parse((ROOT / 'build/assemble.py').read_text())
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'build_validation')
-        with tempfile.TemporaryDirectory() as work:
-            root = Path(work); source = root / 'source'; source.mkdir(); self.fixture(source)
-            for name in p.REQUIRED - set(p.inventory(source)):
-                path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture')
-            (source / 'tests/runtime/sysfs-unused.py').write_text('raise RuntimeError("must not execute")')
-            fs = root / 'components/sysbox-fs/seccomp'; fs.mkdir(parents=True)
-            for directory in ('sysfstransfer', 'mount', 'handler/implementations', 'fuse', 'bazil/fs'):
-                (root / 'components/sysbox-fs' / directory).mkdir(parents=True, exist_ok=True)
-            def copy(source_path, destination):
-                source_path = Path(source_path)
-                if str(source_path).startswith('/work/project/'):
-                    source_path = ROOT / source_path.relative_to('/work/project')
-                if str(source_path) == '/work/ctr': Path(destination).write_bytes(b'fixed ctr')
-                else: shutil.copy2(source_path, destination)
-            commands = []
-            def command(args, **kwargs):
-                commands.append((args, kwargs))
-                if args[0] == 'cc': Path(args[-1]).write_bytes(b'checkpoint tool')
-                return subprocess.CompletedProcess(args, 1 if args[0].endswith('mount-helper') else 0,
-                                                   stdout='', stderr=(b'sysfs-transfer:' if 'sysfs' in args[0] else b'proc-transfer:') if args[0].endswith('mount-helper') else '')
-            namespace = {'OUT': root, 'Path': lambda value: ROOT / Path(value).relative_to('/work/project'),
-                         'proc_transfer': p, 'integration_record': {'lock': self.lock},
-                         'stable_json': json.dumps, 'subprocess': SimpleNamespace(run=command),
-                         'shutil': SimpleNamespace(copy2=copy, copytree=shutil.copytree)}
-            exec(compile(ast.Module(body=[function], type_ignores=[]), 'build/assemble.py', 'exec'), namespace)
-            namespace['build_validation'](source, root / 'components', {'GOFLAGS': '-mod=readonly'})
-            python_checks = [args for args, _ in commands if args[0] == 'python3']
-            self.assertEqual([args[args.index('-p')+1] for args in python_checks if '-p' in args],
-                             ['test_lifecycle.py', 'test_proc_verifier.py', 'test_sysfs.py'])
-            self.assertEqual(len(commands), 18)
-            self.assertTrue(any('./sysfstransfer' in args for args, _ in commands))
-            for args, kwargs in commands:
-                self.assertFalse(any(value.endswith('scripts/build.py') for value in args))
-            record = json.loads((root / 'validation/artifacts.lock.json').read_text())
-            self.assertEqual(record['artifact_sha256']['runtime/sysfs-unused.py'], p.sha256(source / 'tests/runtime/sysfs-unused.py'))
-            self.assertEqual(record['revision'], self.lock['revision'])
-            self.assertEqual(record['source_lock_sha256'], p.sha256(ROOT / 'build/proc-transfer.lock.json'))
-            results = json.loads((root / 'validation/upstream-results.json').read_text())
-            self.assertEqual(len(results), 12)
-            self.assertTrue(all(result['status'] == 'passed' for result in results))
+        for oracle_failure in (False, True):
+            with self.subTest(oracle_failure=oracle_failure), tempfile.TemporaryDirectory() as work:
+                root = Path(work); source = root / 'source'; source.mkdir(); self.fixture(source)
+                for name in p.REQUIRED - set(p.inventory(source)):
+                    path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture')
+                (source / 'tests/runtime/sysfs_oracle.py').write_text(
+                    'IDENTITY = ' + repr('wrong' if oracle_failure else 'reviewed') + '\n')
+                (source / 'tests/runtime/sysfs-network.py').write_text(
+                    'from sysfs_oracle import IDENTITY\nassert IDENTITY == "reviewed"\n')
+                (source / 'tests/static/test_sysfs_oracle.py').write_text(
+                    'import pathlib, sys, unittest\n'
+                    'sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "runtime"))\n'
+                    'import sysfs_oracle\n'
+                    'class Oracle(unittest.TestCase):\n'
+                    ' def test_identity(self): self.assertEqual(sysfs_oracle.IDENTITY, "reviewed")\n')
+                (source / 'tests/runtime/sysfs-unused.py').write_text('raise RuntimeError("must not execute")')
+                fs = root / 'components/sysbox-fs/seccomp'; fs.mkdir(parents=True)
+                for directory in ('sysfstransfer', 'mount', 'handler/implementations', 'fuse', 'bazil/fs'):
+                    (root / 'components/sysbox-fs' / directory).mkdir(parents=True, exist_ok=True)
+                def copy(source_path, destination):
+                    source_path = Path(source_path)
+                    if str(source_path).startswith('/work/project/'):
+                        source_path = ROOT / source_path.relative_to('/work/project')
+                    if str(source_path) == '/work/ctr': Path(destination).write_bytes(b'fixed ctr')
+                    else: shutil.copy2(source_path, destination)
+                commands = []
+                def command(args, **kwargs):
+                    commands.append((args, kwargs))
+                    if 'test_sysfs_oracle.py' in args:
+                        return subprocess.run([sys.executable, *args[1:]], **kwargs)
+                    if args[0] == 'cc': Path(args[-1]).write_bytes(b'checkpoint tool')
+                    return subprocess.CompletedProcess(args, 1 if args[0].endswith('mount-helper') else 0,
+                                                       stdout='', stderr=(b'sysfs-transfer:' if 'sysfs' in args[0] else b'proc-transfer:') if args[0].endswith('mount-helper') else '')
+                namespace = {'OUT': root, 'Path': lambda value: ROOT / Path(value).relative_to('/work/project'),
+                             'proc_transfer': p, 'integration_record': {'lock': self.lock},
+                             'stable_json': json.dumps, 'subprocess': SimpleNamespace(run=command),
+                             'shutil': SimpleNamespace(copy2=copy, copytree=shutil.copytree)}
+                exec(compile(ast.Module(body=[function], type_ignores=[]), 'build/assemble.py', 'exec'), namespace)
+                if oracle_failure:
+                    with self.assertRaisesRegex(RuntimeError, 'selected upstream regression failed'):
+                        namespace['build_validation'](source, root / 'components', {'GOFLAGS': '-mod=readonly'})
+                    results = json.loads((root / 'validation/upstream-results.json').read_text())
+                    self.assertEqual(results[-1]['status'], 'failed')
+                    self.assertIn('test_sysfs_oracle.py', results[-1]['command'])
+                    self.assertFalse((root / 'validation/artifacts.lock.json').exists())
+                    continue
+                namespace['build_validation'](source, root / 'components', {'GOFLAGS': '-mod=readonly'})
+                for directory in ('runtime', 'oracle/tests/runtime'):
+                    subprocess.run([sys.executable, '-E', str(root / 'validation' / directory / 'sysfs-network.py')],
+                                   cwd=root, check=True, capture_output=True, text=True)
+                python_checks = [args for args, _ in commands if args[0] == 'python3']
+                self.assertEqual([args[args.index('-p')+1] for args in python_checks if '-p' in args],
+                                 ['test_lifecycle.py', 'test_proc_verifier.py', 'test_sysfs.py', 'test_sysfs_oracle.py'])
+                self.assertEqual(len(commands), 19)
+                self.assertTrue(any('./sysfstransfer' in args for args, _ in commands))
+                for args, kwargs in commands:
+                    self.assertFalse(any(value.endswith('scripts/build.py') for value in args))
+                record = json.loads((root / 'validation/artifacts.lock.json').read_text())
+                self.assertEqual(record['artifact_sha256']['runtime/sysfs-unused.py'], p.sha256(source / 'tests/runtime/sysfs-unused.py'))
+                for name in ('runtime/sysfs_oracle.py', 'oracle/tests/runtime/sysfs_oracle.py',
+                             'oracle/tests/static/test_sysfs_oracle.py'):
+                    original = name.removeprefix('oracle/') if name.startswith('oracle/') else 'tests/' + name
+                    self.assertEqual(record['artifact_sha256'][name], p.sha256(source / original))
+                self.assertEqual(record['revision'], self.lock['revision'])
+                self.assertEqual(record['source_lock_sha256'], p.sha256(ROOT / 'build/proc-transfer.lock.json'))
+                results = json.loads((root / 'validation/upstream-results.json').read_text())
+                self.assertEqual(len(results), 13)
+                self.assertTrue(all(result['status'] == 'passed' for result in results))
 
     def test_full_inventory_detects_changed_missing_and_extra_files(self):
-        for failure in ('changed', 'missing', 'extra'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
-                source = Path(work) / 'source'; source.mkdir()
-                self.fixture(source)
-                recorded = p.inventory(source)
-                if failure == 'changed': (source / 'helper/proc-mount-helper.c').write_text('altered')
-                if failure == 'missing': (source / 'helper/proc-mount-helper.c').unlink()
-                if failure == 'extra': (source / 'extra').write_text('unrecorded')
-                archive = Path(work) / 'source.tar'
-                with tarfile.open(archive, 'w') as tf: tf.add(source, arcname='root')
-                lock = dict(self.lock, sha256=p.sha256(archive), input_sha256=recorded)
-                with mock.patch.object(p.urllib.request, 'urlopen') as response:
-                    response.return_value.read.return_value = archive.read_bytes()
-                    with self.assertRaisesRegex(ValueError, 'inventory/hash mismatch'):
-                        p.fetch(lock, Path(work) / 'download.tar', Path(work) / 'unpacked', self.versions)
+        for target in ('helper/proc-mount-helper.c', 'tests/runtime/sysfs_oracle.py',
+                       'tests/static/test_sysfs_oracle.py'):
+            for failure in ('changed', 'missing', 'extra'):
+                with self.subTest(target=target, failure=failure), tempfile.TemporaryDirectory() as work:
+                    source = Path(work) / 'source'; source.mkdir()
+                    self.fixture(source)
+                    for name in ('tests/runtime/sysfs_oracle.py', 'tests/static/test_sysfs_oracle.py'):
+                        path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('original')
+                    recorded = p.inventory(source)
+                    if failure == 'changed': (source / target).write_text('altered')
+                    if failure == 'missing': (source / target).unlink()
+                    if failure == 'extra': (source / 'extra').write_text('unrecorded')
+                    archive = Path(work) / 'source.tar'
+                    with tarfile.open(archive, 'w') as tf: tf.add(source, arcname='root')
+                    lock = dict(self.lock, sha256=p.sha256(archive), input_sha256=recorded)
+                    with mock.patch.object(p.urllib.request, 'urlopen') as response:
+                        response.return_value.read.return_value = archive.read_bytes()
+                        with self.assertRaisesRegex(ValueError, 'inventory/hash mismatch'):
+                            p.fetch(lock, Path(work) / 'download.tar', Path(work) / 'unpacked', self.versions)
 
     @unittest.skipUnless(__import__('shutil').which('patch'), 'requires GNU patch')
     def test_real_patch_requires_all_context_and_rejects_fuzzy_match(self):
@@ -360,6 +396,17 @@ class OperatorContracts(unittest.TestCase):
                 with self.assertRaises(ValueError): launcher.verify_artifacts(root)
                 lock['artifact_sha256'][missing] = changed
             save()
+            for name in ('runtime/sysfs_oracle.py', 'oracle/tests/runtime/sysfs_oracle.py',
+                         'oracle/tests/static/test_sysfs_oracle.py'):
+                path = root / name
+                for failure in ('missing', 'changed', 'symlink'):
+                    if failure == 'missing': path.unlink()
+                    elif failure == 'changed': path.write_bytes(b'tampered')
+                    else:
+                        path.unlink(); path.symlink_to(root / 'launcher.py')
+                    with self.subTest(name=name, failure=failure), self.assertRaises((ValueError, FileNotFoundError)):
+                        launcher.verify_artifacts(root)
+                    path.unlink(missing_ok=True); path.write_bytes(values[name])
             (root / 'ctr').write_bytes(b'changed')
             with self.assertRaises(ValueError): launcher.verify_artifacts(root)
             lock['artifact_sha256']['ctr'] = hashlib.sha256(b'changed').hexdigest(); save()
@@ -369,6 +416,45 @@ class OperatorContracts(unittest.TestCase):
             with self.assertRaises(ValueError): launcher.mapped(mapping, 65536)
             mapping.write_text('0 0 4294967295\n')
             with self.assertRaises(ValueError): launcher.mapped(mapping, 1001)
+
+    def test_probe_process_root_oracle_integrity_with_valid_launcher_payload(self):
+        launcher = self.module('probe_oracle_launcher', 'build/runtime_launcher.py')
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work); payload = root / 'payload'; proc = root / 'proc/123'
+            values = {name: name.encode() for name in launcher.REQUIRED_ARTIFACTS | {'oracle/additional-input.txt'}}
+            for name in launcher.VALIDATION_BINARIES:
+                values[name] = b'\x7fELF\x02\x01' + b'\0' * 12 + b'\x3e\0'
+            for name, value in values.items():
+                path = payload / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+            lock = {'schema_version': 1, 'architecture': 'amd64', 'contract': launcher.CONTRACT,
+                    'build_profile': p.BUILD_PROFILE, 'launcher_python_minimum': '3.12', 'revision': 'a' * 40,
+                    'source_lock_sha256': 'b' * 64,
+                    'artifact_sha256': {name: hashlib.sha256(value).hexdigest() for name, value in values.items()}}
+            (payload / 'artifacts.lock.json').write_text(json.dumps(lock))
+            artifacts = launcher.verify_artifacts(payload)
+            for name, value in values.items():
+                if name.startswith('oracle/'):
+                    path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+                    path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
+            launcher.verify_oracle_root(proc, artifacts)
+            # Every inventoried oracle copy is checked, including inputs beyond
+            # the required module and static test; launcher copies stay valid.
+            for name in sorted(name for name in values if name.startswith('oracle/')):
+                path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+                for failure in ('changed', 'missing', 'symlink'):
+                    with self.subTest(name=name, failure=failure):
+                        if failure == 'changed': path.write_bytes(b'tampered')
+                        elif failure == 'missing': path.unlink()
+                        else:
+                            path.unlink(); path.symlink_to(payload / name)
+                        launcher.verify_artifacts(payload)
+                        if failure == 'missing':
+                            with self.assertRaises(FileNotFoundError): launcher.verify_oracle_root(proc, artifacts)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'self-contained upstream oracle mismatch'):
+                                launcher.verify_oracle_root(proc, artifacts)
+                        path.unlink(missing_ok=True); path.write_bytes(values[name])
+            launcher.verify_oracle_root(proc, artifacts)
 
     def test_manifest_renderer_keeps_actual_probe_filter_and_dedicated_trust_scope(self):
         operator = self.module('operator', 'scripts/proc_transfer_operator.py')
@@ -450,6 +536,19 @@ class OperatorContracts(unittest.TestCase):
         self.assertTrue(any(c[-2:] == ['/opt/proc-transfer/runtime/sysfs-interleave.py', '/sys'] for c in commands))
         self.assertTrue(any(c[-1] == '/opt/proc-transfer/runtime/sysfs-write-policy.py' for c in commands))
         self.assertFalse(any('failure' in arg or 'dentry-protection' in arg for c in commands for arg in c))
+        self.assertEqual(commands[-1], ['unshare', '--user', '--map-root-user', '--mount', '--net', '--',
+                                       '/usr/bin/python3', '/opt/proc-transfer/runtime/sysfs-write-policy.py'])
+        with mock.patch.object(route.os, 'getuid', return_value=1001), \
+             mock.patch.object(route.os, 'getgid', return_value=1001), \
+             mock.patch.object(route.tempfile, 'TemporaryDirectory') as temporary, \
+             mock.patch.object(route.subprocess, 'run') as run:
+            temporary.return_value.__enter__.return_value = '/tmp/owned-target'
+            route.main()
+            self.assertEqual(run.call_args_list, [mock.call(c, check=True, timeout=45) for c in commands])
+            run.reset_mock(); run.side_effect = subprocess.CalledProcessError(1, commands[0])
+            with self.assertRaises(subprocess.CalledProcessError): route.main()
+            self.assertEqual(run.call_count, 1)
+
         with mock.patch.object(route.os, 'getuid', return_value=0), mock.patch.object(route.subprocess, 'run') as run:
             with self.assertRaises(ValueError): route.main()
             run.assert_not_called()

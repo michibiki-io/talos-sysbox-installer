@@ -25,12 +25,13 @@ PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
 VALIDATION_BINARIES = ('ctr', 'helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint', 'checkpoint-sysfs', 'thread-sysfs', 'sysfs-failure-helper')
 REQUIRED_ARTIFACTS = {'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'ctr',
                       *VALIDATION_BINARIES, 'sysfs_runtime.py', 'upstream-results.json',
-                      *('runtime/' + name for name in ('verify.sh', 'verify.c', 'thread-proc.c',
+                      *(prefix + name for prefix in ('runtime/', 'oracle/tests/runtime/')
+                        for name in ('verify.sh', 'verify.c', 'thread-proc.c',
                         'verify-sys.py', 'helper-rejections.py', 'checkpoints.py',
                         'checkpoint-requester.c', 'stress-proc.py', 'thread-sysfs.c', 'checkpoint-sysfs.c',
                         'sysfs-network.py', 'sysfs-interleave.py', 'sysfs-write-policy.py',
-                        'sysfs-failures.py', 'sysfs-dentry-protection.py')),
-                      'oracle/tests/runtime/sysfs-network.py', 'oracle/tests/runtime/sysfs-interleave.py'}
+                        'sysfs-failures.py', 'sysfs-dentry-protection.py', 'sysfs_oracle.py')),
+                      'oracle/tests/static/test_sysfs_oracle.py'}
 
 
 def digest(path):
@@ -94,6 +95,14 @@ def verify_artifacts(base):
         if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 62:
             raise ValueError('validation executable ABI must be amd64 ELF')
     return lock
+
+
+def verify_oracle_root(proc, artifacts):
+    for name, sha in artifacts['artifact_sha256'].items():
+        if name.startswith('oracle/'):
+            path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+            if path.is_symlink() or digest(path) != sha:
+                raise ValueError('self-contained upstream oracle mismatch')
 
 
 def verify_backend(backend, metadata, host, proc_root=Path('/proc')):
@@ -197,11 +206,7 @@ def run(args):
             relative = Path(name)
             if not relative.is_absolute() or '..' in relative.parts or digest(proc / 'root' / str(relative).lstrip('/')) != sha:
                 raise ValueError('probe binary differs from fixed image build')
-        for name, sha in artifacts['artifact_sha256'].items():
-            if name.startswith('oracle/'):
-                path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
-                if path.is_symlink() or digest(path) != sha:
-                    raise ValueError('self-contained upstream oracle mismatch')
+        verify_oracle_root(proc, artifacts)
         uid, gid = mapped(proc / 'uid_map', 1001), mapped(proc / 'gid_map', 1001)
         status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
         if int(status['Uid'].split()[1]) != uid or int(status['Gid'].split()[1]) != gid or int(status['Seccomp']) != 2 or int(status['CapEff'], 16) != 0 or int(status['NoNewPrivs']) != 1:
