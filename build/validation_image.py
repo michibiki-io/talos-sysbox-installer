@@ -55,7 +55,7 @@ Path('/opt/proc-transfer/image-versions.json').write_text(json.dumps({
     'source': spec, 'apt_snapshot': lock['apt_snapshot'],
     'apt_packages': package_inventory['effective'],
     'image_binary_sha256': {str(Path(shutil.which(name)).resolve()): hashlib.sha256(Path(shutil.which(name)).resolve().read_bytes()).hexdigest()
-                            for name in ('bwrap', 'python3', 'cc', 'nsenter')}}, indent=2) + '\n')
+                            for name in ('bwrap', 'python3', 'cc', 'nsenter', 'unshare', 'ip')}}, indent=2) + '\n')
 inventory = {str(path.relative_to(sources)): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sources.rglob('*') if path.is_file()}
 (sources / 'source-files.sha256.json').write_text(json.dumps(inventory, indent=2, sort_keys=True) + '\n')

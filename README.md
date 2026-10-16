@@ -124,7 +124,7 @@ Removing Sysbox requires migrating/deleting opted-in workloads and removing its 
 
 ### Proc transfer integration
 
-The protected nested procfs integration pins public upstream commit `ab02207dafe00284797f64becd214c10e1c99285` in [build/proc-transfer.lock.json](build/proc-transfer.lock.json). Standalone runc/mgr compile before patching; fs and its static production helper build as a verified pair. The actual fs backend receives a fixed helper environment/path. See [source updates, activation and operator verification](docs/proc-transfer.md) for the separate validation artifacts, post-merge public-digest probe distribution and explicitly unpublished local bwrap 0.12.0 archive route. No anonymous-pull proof for a suitable public probe image or real Talos fix is claimed.
+The protected nested procfs/sysfs integration pins public upstream commit `450a656b3722f4281d6812e465a2c0fd65091915` in [build/proc-transfer.lock.json](build/proc-transfer.lock.json). Standalone runc/mgr compile before patching; fs and both static production helpers build as a verified triple with profile `proc-sysfs-fuse-v1` and patched local bazil. The same fs backend receives both fixed helper environments/paths. See [source updates, activation and operator verification](docs/proc-transfer.md) for the separate validation artifacts, post-merge public-digest probe distribution and explicitly unpublished local bwrap 0.12.0 archive route. No anonymous-pull proof for a suitable public probe image or real Talos fix is claimed.
 
 ### Backend trust and supervision
 
@@ -305,7 +305,7 @@ Sysbox の削除は、使用中の Pod の移行と handler と RuntimeClass の
 
 ### Proc transfer の取り込み
 
-公開 upstream の commit `ab02207dafe00284797f64becd214c10e1c99285` を [build/proc-transfer.lock.json](build/proc-transfer.lock.json) で固定します。単体 runc/mgr は patch 前にコンパイルし、fs と static production helper を対として検証します。実 fs backend に helper の環境変数と path を明示します。[更新、有効化、運用者検証](docs/proc-transfer.md) に、production から分離する検証用成果物、merge 後の公開 digest probe 配布、未公開の local bwrap 0.12.0 archive 経路を記載します。適合する公開 probe の匿名取得や実 Talos の修正済みという主張はしていません。
+公開 upstream の commit `450a656b3722f4281d6812e465a2c0fd65091915` を [build/proc-transfer.lock.json](build/proc-transfer.lock.json) で固定します。単体 runc/mgr は patch 前にコンパイルし、fs と static production helper 2個を `proc-sysfs-fuse-v1` の triple として検証し、local bazil も patch します。同じ実 fs backend に両 helper の環境変数と path を明示します。[更新、有効化、運用者検証](docs/proc-transfer.md) に、production から分離する検証用成果物、merge 後の公開 digest probe 配布、未公開の local bwrap 0.12.0 archive 経路を記載します。適合する公開 probe の匿名取得や実 Talos の修正済みという主張はしていません。
 
 ### backendの特権と監督
 

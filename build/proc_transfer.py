@@ -9,10 +9,17 @@ import urllib.request
 from pathlib import Path
 
 REPOSITORY = 'https://github.com/michibiki-io/sysbox-proc-transfer'
-CONTRACT = 'proc-transfer-v1-thread-pidfd'
+CONTRACT = 'proc-sysfs-transfer-v1-thread-pidfd'
+BUILD_PROFILE = 'proc-sysfs-fuse-v1'
+PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
+VALIDATION_ONLY = ('helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint',
+                   'checkpoint-sysfs', 'sysfs-failure-helper', 'thread-sysfs',
+                   'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'sysfs_runtime.py',
+                   'sysfs-failures.py', 'sysfs-dentry-protection.py')
 COMPONENTS = {'root': 'sysbox', 'fs': 'sysbox-fs', 'runc': 'sysbox-runc',
               'ipc': 'sysbox-ipc', 'libs': 'sysbox-libs', 'fuse': 'sysbox-fs/bazil'}
-PRODUCTION_INPUTS = {'helper/proc-mount-helper.c', 'patches/proc-transfer.patch'}
+PRODUCTION_INPUTS = {'helper/proc-mount-helper.c', 'patches/proc-transfer.patch',
+                     'helper/sysfs-mount-helper.c', 'patches/sysfs-transfer.patch'}
 REQUIRED = {'build/sources.lock.json', 'helper/proc-mount-helper.c',
             'patches/proc-transfer.patch', 'LICENSE', 'LICENSES/Apache-2.0.txt',
             'THIRD_PARTY_NOTICES.md', 'tests/upstream/proc_policy_test.go',
@@ -23,6 +30,46 @@ REQUIRED = {'build/sources.lock.json', 'helper/proc-mount-helper.c',
             'tests/runtime/thread-proc.c', 'tests/runtime/verify-sys.py',
             'tests/runtime/helper-rejections.py', 'tests/runtime/checkpoints.py',
             'tests/runtime/checkpoint-requester.c', 'tests/runtime/stress-proc.py'}
+REQUIRED |= PRODUCTION_INPUTS | {
+    'LICENSES/bazil-fuse.txt',
+    'tests/runtime/checkpoint-sysfs.c',
+    'tests/runtime/sysfs-dentry-protection.py',
+    'tests/runtime/sysfs-failures.py',
+    'tests/runtime/sysfs-interleave.py',
+    'tests/runtime/sysfs-network.py',
+    'tests/runtime/sysfs-write-policy.py',
+    'tests/runtime/thread-sysfs.c',
+    'tests/static/test_contracts.py',
+    'tests/static/test_sysfs.py',
+    'tests/unit/sysfs-checkpoint.c',
+    'tests/unit/sysfs-failure-helper.c',
+    'tests/unit/sysfs-liveness.c',
+    'tests/upstream/fuse_container_test.go',
+    'tests/upstream/fuse_identity_test.go',
+    'tests/upstream/sysfs_dentry_test.go',
+    'tests/upstream/sysfs_metadata_test.go',
+    'tests/upstream/sysfs_policy_test.go',
+    'tests/upstream/sysfs_snapshot_test.go',
+}
+
+SYSFS_PATCH_PATHS = {
+    'sysbox-fs/bazil/fs/serve.go',
+    'sysbox-fs/domain/sysfs.go',
+    'sysbox-fs/fuse/dir.go',
+    'sysbox-fs/fuse/file.go',
+    'sysbox-fs/fuse/server.go',
+    'sysbox-fs/fuse/service.go',
+    'sysbox-fs/handler/implementations/passThrough.go',
+    'sysbox-fs/handler/implementations/sysDevicesVirtual.go',
+    'sysbox-fs/handler/implementations/sysfsNetwork.go',
+    'sysbox-fs/mount/infoParser.go',
+    'sysbox-fs/mount/service.go',
+    'sysbox-fs/seccomp/mount.go',
+    'sysbox-fs/seccomp/sysfs_transfer.go',
+    'sysbox-fs/state/container.go',
+    'sysbox-fs/state/containerDB.go',
+    'sysbox-fs/sysfstransfer/transfer.go',
+}
 
 
 def sha256(path):
@@ -45,6 +92,8 @@ def load_lock(path):
         raise ValueError('integration archive URL does not match immutable revision')
     if not REQUIRED <= set(lock['input_sha256']):
         raise ValueError('missing required integration input')
+    if {name for name in lock['input_sha256'] if name.startswith(('helper/', 'patches/'))} != PRODUCTION_INPUTS:
+        raise ValueError('unsupported production input inventory')
     for name, digest in [('archive', lock['sha256']), *lock['input_sha256'].items()]:
         if not re.fullmatch('[0-9a-f]{64}', digest):
             raise ValueError('invalid input digest: ' + name)
@@ -106,7 +155,13 @@ def verify_manifest(root, versions):
     if not PRODUCTION_INPUTS <= set(manifest['source_sha256']):
         raise ValueError('upstream manifest lacks production input hashes')
     files = inventory(root)
+    production = {name for name in files if name.startswith(('helper/', 'patches/'))}
+    declared = {name for name in manifest['source_sha256'] if name.startswith(('helper/', 'patches/'))}
+    if production != PRODUCTION_INPUTS or declared != PRODUCTION_INPUTS:
+        raise ValueError('unsupported production input inventory')
     for name, digest in manifest['source_sha256'].items():
+        if name not in PRODUCTION_INPUTS and not name.startswith(('tests/', 'docs/')):
+            raise ValueError('unsupported production input: ' + name)
         if not re.fullmatch('[0-9a-f]{64}', digest) or name not in files or files[name] != digest:
             raise ValueError('upstream source manifest hash mismatch: ' + name)
     # This adapter supports the reviewed FD/argument ABI only. A new upstream
@@ -125,6 +180,16 @@ def verify_manifest(root, versions):
                'sysbox-fs/seccomp/tracer.go', 'sysbox-runc/libcontainer/nsenter/nsexec.c'}
     if set(changed) != allowed:
         raise ValueError('unsupported patch scope')
+    sysfs = (root / 'patches/sysfs-transfer.patch').read_text()
+    if set(re.findall(r'^\+\+\+ b/(.+)$', sysfs, re.M)) != SYSFS_PATCH_PATHS:
+        raise ValueError('unsupported sysfs patch scope')
+    for required in ('SYSBOX_SYSFS_TRANSFER_HELPER', 'CaptureSysfsPolicy', 'WithChildReaperGuard'):
+        if required not in sysfs:
+            raise ValueError('unsupported sysfs patch contract')
+    helper = (root / 'helper/sysfs-mount-helper.c').read_text()
+    for required in ('sysfs-transfer:', '7 requester Network', '10 requester thread pidfd', '200/201', 'supported sysfs flags', '/tmp'):
+        if required not in helper:
+            raise ValueError('unsupported sysfs helper contract')
     return manifest
 
 
@@ -148,40 +213,47 @@ def fetch(lock, archive, root, versions):
 
 
 def apply_patch(root, integration):
-    patch = integration / 'patches/proc-transfer.patch'
-    args = ['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', str(patch)]
-    subprocess.run([*args, '--dry-run'], cwd=root, check=True)
-    subprocess.run(args, cwd=root, check=True)
+    for name in ('proc-transfer.patch', 'sysfs-transfer.patch'):
+        patch = integration / 'patches' / name
+        args = ['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', str(patch)]
+        subprocess.run([*args, '--dry-run'], cwd=root, check=True)
+        subprocess.run(args, cwd=root, check=True)
 
 
 def verify_pair(local, binaries):
-    """Validate the actual backend payload, ownership and static paired ELFs."""
+    """Validate the actual backend payload, ownership and static matched ELFs."""
     root = local / 'lib/containers/sysbox-fs'
-    for name in ('sysbox-fs', 'proc-mount-helper'):
+    for name in PRODUCTION_BINARIES:
         path = root / name
         if not path.is_file() or path.is_symlink() or sha256(path) != binaries[name]:
-            raise ValueError('missing/mismatched production pair: ' + name)
+            raise ValueError('missing/mismatched production triple: ' + name)
         stat = path.stat()
         if stat.st_uid != 0 or stat.st_gid != 0 or stat.st_mode & 0o777 != 0o755:
-            raise ValueError('production pair must be root-owned mode 0755')
+            raise ValueError('production triple must be root-owned mode 0755')
         header = path.read_bytes()[:20]
         if header[:4] != b'\x7fELF' or header[4:6] != bytes([2, 1]) or int.from_bytes(header[18:20], 'little') != 62:
-            raise ValueError('production pair must be amd64 ELF')
+            raise ValueError('production triple must be amd64 ELF')
         program = subprocess.check_output(['readelf', '-l', str(path)], text=True)
         dynamic = subprocess.check_output(['readelf', '-d', str(path)], text=True)
         if 'INTERP' in program or '(NEEDED)' in dynamic:
-            raise ValueError('production pair must be static')
-    for forbidden in ('helper-checkpoint', 'checkpoint-requester', 'launcher.py'):
+            raise ValueError('production triple must be static')
+    for forbidden in VALIDATION_ONLY:
         if list(local.rglob(forbidden)):
             raise ValueError('validation artifact in production rootfs')
 
 
 def verify_extension_archive(archive, metadata):
     """Assert final OCI-layer ownership, installed hashes and validation exclusion."""
+    if metadata['proc_transfer'].get('build_profile') != BUILD_PROFILE:
+        raise ValueError('production build profile mismatch')
+    outputs = metadata['proc_transfer']['output_sha256']
+    if set(outputs) != set(PRODUCTION_BINARIES) or any(outputs[name] != metadata['binary_sha256'][name] for name in outputs):
+        raise ValueError('production triple inventory mismatch')
     expected = {
         'rootfs/usr/local/bin/sysbox-fs': metadata['binary_sha256']['sysbox-fs'],
         'rootfs/usr/local/lib/containers/sysbox-fs/sysbox-fs': metadata['binary_sha256']['sysbox-fs'],
         'rootfs/usr/local/lib/containers/sysbox-fs/proc-mount-helper': metadata['binary_sha256']['proc-mount-helper'],
+        'rootfs/usr/local/lib/containers/sysbox-fs/sysfs-mount-helper': metadata['binary_sha256']['sysfs-mount-helper'],
         'rootfs/usr/local/lib/containers/sysbox-fs/supervisor': metadata['supervisor_sha256'],
     }
     files = {}
@@ -194,7 +266,7 @@ def verify_extension_archive(archive, metadata):
                     name = member.name.removeprefix('./')
                     if Path(name).name.startswith('.wh.'):
                         raise ValueError('unexpected whiteout in scratch extension image')
-                    if name.startswith('rootfs/') and Path(name).name in ('helper-checkpoint', 'checkpoint-requester', 'launcher.py', 'runtime_exec.py', 'probe_idle.py'):
+                    if name.startswith('rootfs/') and Path(name).name in VALIDATION_ONLY:
                         raise ValueError('test-only artifact in extension image')
                     if name in expected:
                         if member.uid != 0 or member.gid != 0 or member.mode != 0o755:
@@ -211,5 +283,5 @@ def verify_extension_archive(archive, metadata):
             files[name] = files[target]
     if files != expected:
         raise ValueError('extension image does not contain the matched production payload')
-    return {'pair_sha256': metadata['proc_transfer']['output_sha256'], 'root_owned_mode_0755': True,
+    return {'build_profile': BUILD_PROFILE, 'production_sha256': metadata['proc_transfer']['output_sha256'], 'root_owned_mode_0755': True,
             'test_helpers_absent': True}

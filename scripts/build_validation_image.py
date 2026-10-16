@@ -82,7 +82,7 @@ def main():
     (out / 'test-images.lock.json').unlink(missing_ok=True)
     lock = json.loads(a.lock.read_text())
     source = proc_transfer.load_lock(ROOT / 'build/proc-transfer.lock.json')
-    image = 'docker.io/talos-sysbox-local/proc-transfer-probe:' + source['revision'][:12]
+    image = 'docker.io/talos-sysbox-local/proc-transfer-probe:' + source['revision'][:12] + '-proc-sysfs-fuse-v1'
     if a.image:
         if not re.fullmatch(r'ghcr.io/[a-z0-9_.-]+/talos-sysbox-proc-transfer-probe:v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+', a.image):
             p.error('invalid immutable probe release tag')
@@ -115,6 +115,8 @@ def main():
     if a.production_metadata:
         expected = json.loads(a.production_metadata.read_text())
         actual = json.loads((out / 'corresponding-source/production-build-metadata.json').read_text())
+        if expected['proc_transfer'].get('build_profile') != proc_transfer.BUILD_PROFILE or actual['proc_transfer'].get('build_profile') != proc_transfer.BUILD_PROFILE:
+            raise RuntimeError('probe and installers require proc/sysfs build profile')
         for key in ('binary_sha256', 'supervisor_sha256', 'source_inputs_sha256'):
             if expected[key] != actual[key]:
                 raise RuntimeError('probe and installers were built from different inputs/outputs')
@@ -133,7 +135,7 @@ def main():
         with tarfile.open(out / 'probe-oci.tar', 'w') as exported:
             for path in sorted(layout.iterdir()):
                 exported.add(path, arcname=path.name, filter=build.archive_member)
-    record = {'schema_version': 1, 'test_images': {'proc_transfer_probe': {
+    record = {'schema_version': 1, 'build_profile': proc_transfer.BUILD_PROFILE, 'test_images': {'proc_transfer_probe': {
         'local_tag': image, 'oci_digest': oci_digest, 'config_digest': build.archive_config_digest(archive),
         'archive': 'probe-oci.tar', 'archive_sha256': build.file_sha256(out / 'probe-oci.tar'),
         'docker_archive': archive.name, 'docker_archive_sha256': build.file_sha256(archive), 'anonymous_pull_verified': False,

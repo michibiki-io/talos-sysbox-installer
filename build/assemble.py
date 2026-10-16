@@ -110,11 +110,11 @@ def rebuild_sysbox():
     integration_lock = proc_transfer.load_lock(Path('/work/project/build/proc-transfer.lock.json'))
     integration_root = SOURCES / 'proc-transfer'
     manifest = proc_transfer.fetch(integration_lock, SOURCES / 'proc-transfer.tar.gz', integration_root, LOCK)
-    for notice in ('LICENSE', 'LICENSES/Apache-2.0.txt', 'THIRD_PARTY_NOTICES.md'):
+    for notice in ('LICENSE', 'LICENSES/Apache-2.0.txt', 'LICENSES/bazil-fuse.txt', 'THIRD_PARTY_NOTICES.md'):
         dest = LIC / 'proc-transfer' / notice
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(integration_root / notice, dest)
-    integration_record.update({'lock': integration_lock, 'upstream_manifest': manifest,
+    integration_record.update({'build_profile': proc_transfer.BUILD_PROFILE, 'lock': integration_lock, 'upstream_manifest': manifest,
                                'effective_go': run(['go', 'version']),
                                'effective_cc': run(['cc', '--version']).splitlines()[0],
                                'effective_ld': run(['ld', '--version']).splitlines()[0],
@@ -135,11 +135,17 @@ def rebuild_sysbox():
             integration_record['patched_nsexec_sha256'] = proc_transfer.sha256(source_root / 'sysbox-runc/libcontainer/nsenter/nsexec.c')
             if integration_record['patched_nsexec_sha256'] == integration_record['unpatched_nsexec_sha256']:
                 raise RuntimeError('fs dependency patch did not change nsexec')
-            commit += '+proc-transfer.' + integration_lock['revision'][:12]
+            commit += '+proc-sysfs-transfer.' + integration_lock['revision'][:12]
+            integration_record['embedded_fs_commit'] = commit
         linkmap=links/(component+'.map')
         flags=f"-buildid= -w -linkmode=external -extldflags '-static -Wl,-Map,{linkmap}' -X 'main.edition=Community Edition (CE)' -X main.version={LOCK['sysbox']} -X main.commitId={commit} -X main.builtAt=locked-source-build -X main.builtBy=michibiki.io"
         build_env=dict(env,GOFLAGS='-mod=mod -p=2') if generating else env
         subprocess.run(['go','build','-buildvcs=false','-trimpath','-tags',tags,'-ldflags',flags,'-o',str(target/component),package],cwd=source_root/component,env=build_env,check=True)
+        if component == 'sysbox-fs':
+            version_output = run([str(target/component), '--version'])
+            if commit not in version_output:
+                raise RuntimeError('fs embedded integration identity mismatch')
+            integration_record['fs_version'] = version_output
         for name in ('go.mod','go.sum'):
             file=source_root/component/name
             dest=SOURCES/'effective-modules'/component/name
@@ -150,12 +156,13 @@ def rebuild_sysbox():
         # matching signed-snapshot source packages and license texts too.
         for library in set(re.findall(r'(/[^\s()]+\.a)',linkmap.read_text())):
             if Path(library).is_file(): owner(Path(library).resolve())
-    helper_map = links / 'proc-mount-helper.map'
-    subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-static',
-                    '-Wl,-Map,' + str(helper_map), str(integration_root / 'helper/proc-mount-helper.c'),
-                    '-o', str(target / 'proc-mount-helper')], check=True)
-    for library in set(re.findall(r'(/[^\s()]+\.a)', helper_map.read_text())):
-        if Path(library).is_file(): owner(Path(library).resolve())
+    for name in ('proc-mount-helper', 'sysfs-mount-helper'):
+        helper_map = links / (name + '.map')
+        subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-static',
+                        '-Wl,-Map,' + str(helper_map), str(integration_root / ('helper/' + name + '.c')),
+                        '-o', str(target / name)], check=True)
+        for library in set(re.findall(r'(/[^\s()]+\.a)', helper_map.read_text())):
+            if Path(library).is_file(): owner(Path(library).resolve())
     # Preserve linker evidence for actual linked static library attribution.
     shutil.copytree(links, SOURCES / 'link-maps')
     build_validation(integration_root, source_root, env)
@@ -185,15 +192,33 @@ def build_validation(integration, source_root, env):
     validation = OUT / 'validation'
     validation.mkdir()
     shutil.copytree(integration / 'tests/runtime', validation / 'runtime')
+    # Exact upstream oracle tree: retained and inventoried before image export.
+    shutil.copytree(integration, validation / 'oracle')
     shutil.copy2('/work/project/build/runtime_launcher.py', validation / 'launcher.py')
-    for name in ('runtime_exec.py', 'probe_idle.py'):
+    for name in ('runtime_exec.py', 'probe_idle.py', 'sysfs_runtime.py'):
         shutil.copy2('/work/project/build/' + name, validation / name)
     shutil.copy2('/work/ctr', validation / 'ctr')
     for source, output, threaded in [('tests/unit/helper-checkpoint.c', 'helper-checkpoint', False),
-                                     ('tests/runtime/checkpoint-requester.c', 'checkpoint-requester', True)]:
+                                     ('tests/runtime/checkpoint-requester.c', 'checkpoint-requester', True),
+                                     ('tests/unit/sysfs-checkpoint.c', 'sysfs-checkpoint', False),
+                                     ('tests/runtime/checkpoint-sysfs.c', 'checkpoint-sysfs', True),
+                                     ('tests/runtime/thread-sysfs.c', 'thread-sysfs', True),
+                                     ('tests/unit/sysfs-failure-helper.c', 'sysfs-failure-helper', False)]:
         args = ['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-static']
         if threaded: args.append('-pthread')
+        if output == 'sysfs-failure-helper':
+            args += ['-DTEST_HELPER="/sysfs-mount-helper"',
+                     '-DTEST_TRIGGER="/tmp/issue5-failure-switch"']
         subprocess.run([*args, str(integration / source), '-o', str(validation / output)], check=True)
+    fs = source_root / 'sysbox-fs'
+    for source, destination in (
+            ('sysfs_policy_test.go', 'sysfstransfer/policy_test.go'),
+            ('sysfs_snapshot_test.go', 'mount/sysfs_snapshot_test.go'),
+            ('sysfs_metadata_test.go', 'handler/implementations/sysfs_metadata_test.go'),
+            ('sysfs_dentry_test.go', 'fuse/sysfs_dentry_test.go'),
+            ('fuse_container_test.go', 'fuse/fuse_container_test.go'),
+            ('fuse_identity_test.go', 'bazil/fs/lookup_identity_test.go')):
+        shutil.copy2(integration / 'tests/upstream' / source, fs / destination)
     seccomp = source_root / 'sysbox-fs/seccomp'
     shutil.copy2(integration / 'tests/upstream/proc_policy_test.go', seccomp / 'proc_policy_test.go')
     (seccomp / 'testdata').mkdir(exist_ok=True)
@@ -202,11 +227,35 @@ def build_validation(integration, source_root, env):
                 '^TestProc(PolicyBeforeNestedTransfer|RequesterThreadPidfd|TransferInvalidNotificationDoesNotLaunch|TransferRealNotification)$', '-count=1'], source_root / 'sysbox-fs', 180),
               (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_lifecycle.py', '-v'], integration, 120),
               (['python3', '-m', 'unittest', 'discover', '-s', 'tests/static', '-p', 'test_proc_verifier.py', '-v'], integration, 120)]
+    checks += [(['go', 'test', '-v', './sysfstransfer', '-count=1'], fs, 180),
+               (['go', 'test', '-v', './mount', '-run', '^TestSysfsRegistration(Snapshot|RootMetadata)$', '-count=1'], fs, 180)]
+    # External upstream mocks are obsolete. Compile every production file with
+    # only the selected immutable regressions, as the upstream recipe specifies.
+    for directory, fixtures, selection in (
+            ('handler/implementations', ['sysfs_metadata_test.go'], '^TestNetwork(SourceMetadata|MetadataGrandchild)$'),
+            ('fuse', ['sysfs_dentry_test.go', 'fuse_container_test.go'], '^Test(ProtectedNetworkLookupFailure|NetworkOwningContainer)$'),
+            ('bazil/fs', ['lookup_identity_test.go'], '^Test(LookupIdentityFreshAttributes|GetattrDispatchInode|NetworkReadDirDispatch)$')):
+        # Use the production fs module graph for local bazil as well.
+        cwd = fs
+        relative = directory
+        sources = [str(path.relative_to(cwd)) for path in sorted((cwd / relative).glob('*.go')) if not path.name.endswith('_test.go')]
+        sources += [relative + '/' + name for name in fixtures]
+        checks.append((['go', 'test', '-v', *sources, '-run', selection, '-count=1'], cwd, 180))
+    for name in ('test_sysfs.py', 'test_contracts.py'):
+        # Packaging contracts that require upstream git inventory are not selected.
+        selection = (['tests.static.test_contracts.Contracts.test_baseline_and_build_pins',
+                      'tests.static.test_contracts.Contracts.test_script_syntax'] if name == 'test_contracts.py'
+                     else ['discover', '-s', 'tests/static', '-p', name])
+        checks.append((['python3', '-m', 'unittest', *selection, '-v'], integration, 120))
     rejection = subprocess.run(['/work/rebuilt/proc-mount-helper', '0', '0', '0'],
                                close_fds=True, capture_output=True, timeout=5)
     if rejection.returncode == 0 or b'proc-transfer:' not in rejection.stderr:
         raise RuntimeError('production helper accepted an unauthorized direct launch')
     results = [{'command': ['proc-mount-helper', '0', '0', '0'], 'status': 'passed', 'conditional_skips': 0}]
+    sysfs_rejection = subprocess.run(['/work/rebuilt/sysfs-mount-helper', '0', '0', '0'], close_fds=True, capture_output=True, timeout=5)
+    if sysfs_rejection.returncode == 0 or b'sysfs-transfer:' not in sysfs_rejection.stderr:
+        raise RuntimeError('production sysfs helper accepted an unauthorized direct launch')
+    results.append({'command': ['sysfs-mount-helper', '0', '0', '0'], 'status': 'passed', 'conditional_skips': 0})
     for command, cwd, timeout in checks:
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
         results.append({'command': command, 'status': 'passed' if result.returncode == 0 else 'failed',
@@ -216,7 +265,7 @@ def build_validation(integration, source_root, env):
             raise RuntimeError('selected upstream regression failed')
     (validation / 'upstream-results.json').write_text(stable_json(results))
     record = {'schema_version': 1, 'revision': integration_record['lock']['revision'],
-              'architecture': 'amd64', 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
+              'build_profile': proc_transfer.BUILD_PROFILE, 'architecture': 'amd64', 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
               'source_lock_sha256': proc_transfer.sha256(Path('/work/project/build/proc-transfer.lock.json')),
               'artifact_sha256': proc_transfer.inventory(validation)}
     (validation / 'artifacts.lock.json').write_text(stable_json(record))
@@ -266,10 +315,11 @@ def main():
             root.joinpath('etc', name).write_text('sysbox:100000:65536\n')
         shutil.copy2(LOCAL / 'bin' / daemon, root / daemon)
         if daemon == 'sysbox-fs':
-            pair_helper = root / 'proc-mount-helper'
-            shutil.copy2(rebuilt / 'proc-mount-helper', pair_helper)
-            pair_helper.chmod(0o755)
-            binaries['proc-mount-helper'] = proc_transfer.sha256(pair_helper)
+            for name in ('proc-mount-helper', 'sysfs-mount-helper'):
+                pair_helper = root / name
+                shutil.copy2(rebuilt / name, pair_helper)
+                pair_helper.chmod(0o755)
+                binaries[name] = proc_transfer.sha256(pair_helper)
         shutil.copy2('/work/ctr', root / 'ctr')
         shutil.copy2('/work/supervisor', root / 'supervisor')
         helper('/bin/sh', root, '/bin/sh')
@@ -318,9 +368,9 @@ logToConsole: false
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
-    integration_record['output_sha256'] = {name: binaries[name] for name in ('sysbox-fs', 'proc-mount-helper')}
+    integration_record['output_sha256'] = {name: binaries[name] for name in proc_transfer.PRODUCTION_BINARIES}
     proc_transfer.verify_pair(LOCAL, binaries)
-    report = {'proc_transfer': integration_record, 'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'Standalone runc/mgr unpatched; fs patched and paired with static helper. All three binaries rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
+    report = {'proc_transfer': integration_record, 'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'Standalone runc/mgr unpatched; fs patched with proc/sysfs/FUSE and matched static helpers. All runtime binaries and both helpers rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
     OUT.joinpath('build-metadata.json').write_text(stable_json(report))
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1

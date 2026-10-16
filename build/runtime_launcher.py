@@ -19,12 +19,18 @@ import traceback
 import time
 
 BASE = Path('/opt/proc-transfer')
-CONTRACT = 'proc-transfer-v1-thread-pidfd'
+CONTRACT = 'proc-sysfs-transfer-v1-thread-pidfd'
+BUILD_PROFILE = 'proc-sysfs-fuse-v1'
+PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
+VALIDATION_BINARIES = ('ctr', 'helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint', 'checkpoint-sysfs', 'thread-sysfs', 'sysfs-failure-helper')
 REQUIRED_ARTIFACTS = {'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'ctr',
-                      'helper-checkpoint', 'checkpoint-requester', 'upstream-results.json',
+                      *VALIDATION_BINARIES, 'sysfs_runtime.py', 'upstream-results.json',
                       *('runtime/' + name for name in ('verify.sh', 'verify.c', 'thread-proc.c',
                         'verify-sys.py', 'helper-rejections.py', 'checkpoints.py',
-                        'checkpoint-requester.c', 'stress-proc.py'))}
+                        'checkpoint-requester.c', 'stress-proc.py', 'thread-sysfs.c', 'checkpoint-sysfs.c',
+                        'sysfs-network.py', 'sysfs-interleave.py', 'sysfs-write-policy.py',
+                        'sysfs-failures.py', 'sysfs-dentry-protection.py')),
+                      'oracle/tests/runtime/sysfs-network.py', 'oracle/tests/runtime/sysfs-interleave.py'}
 
 
 def digest(path):
@@ -73,7 +79,7 @@ def verify_artifacts(base):
     lock = json.loads((base / 'artifacts.lock.json').read_text())
     if (type(lock['schema_version']) is not int or lock['schema_version'] != 1 or
             lock['architecture'] != 'amd64' or lock.get('contract') != CONTRACT or
-            lock.get('launcher_python_minimum') != '3.12' or
+            lock.get('launcher_python_minimum') != '3.12' or lock.get('build_profile') != BUILD_PROFILE or
             not re.fullmatch('[0-9a-f]{40}', lock.get('revision', '')) or
             not re.fullmatch('[0-9a-f]{64}', lock.get('source_lock_sha256', '')) or
             not REQUIRED_ARTIFACTS <= set(lock['artifact_sha256'])):
@@ -83,7 +89,7 @@ def verify_artifacts(base):
         if (relative.is_absolute() or '..' in relative.parts or not re.fullmatch('[0-9a-f]{64}', sha)
                 or (base / relative).is_symlink() or digest(base / relative) != sha):
             raise ValueError('validation artifact hash mismatch')
-    for name in ('ctr', 'helper-checkpoint', 'checkpoint-requester'):
+    for name in VALIDATION_BINARIES:
         header = (base / name).read_bytes()[:20]
         if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 62:
             raise ValueError('validation executable ABI must be amd64 ELF')
@@ -94,14 +100,17 @@ def verify_backend(backend, metadata, host, proc_root=Path('/proc')):
     if digest(proc_root / str(backend) / 'exe') != metadata['binary_sha256']['sysbox-fs']:
         raise ValueError('running fs executable differs from downstream build')
     environment = (proc_root / str(backend) / 'environ').read_bytes().split(b'\0')
-    if [value for value in environment if value.startswith(b'SYSBOX_PROC_TRANSFER_HELPER=')] != [b'SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper']:
-        raise ValueError('actual backend helper environment mismatch')
-    backend_helper = proc_root / str(backend) / 'root/proc-mount-helper'
-    helper_stat = backend_helper.stat()
-    if (backend_helper.is_symlink() or helper_stat.st_uid != 0 or helper_stat.st_gid != 0
-            or helper_stat.st_mode & 0o777 != 0o755
-            or digest(backend_helper) != metadata['binary_sha256']['proc-mount-helper']):
-        raise ValueError('actual backend helper path mismatch')
+    for filesystem in ('proc', 'sysfs'):
+        key = ('SYSBOX_' + filesystem.upper() + '_TRANSFER_HELPER=').encode()
+        name = filesystem + '-mount-helper'
+        if [value for value in environment if value.startswith(key)] != [key + ('/' + name).encode()]:
+            raise ValueError('actual backend helper environment mismatch')
+        backend_helper = proc_root / str(backend) / 'root' / name
+        helper_stat = backend_helper.stat()
+        if (backend_helper.is_symlink() or helper_stat.st_uid != 0 or helper_stat.st_gid != 0
+                or helper_stat.st_mode & 0o777 != 0o755
+                or digest(backend_helper) != metadata['binary_sha256'][name]):
+            raise ValueError('actual backend helper path mismatch')
     if os.readlink(proc_root / str(backend) / 'ns/user') != host['user']:
         raise ValueError('fs backend must use the trusted initial User namespace')
     if os.readlink(proc_root / str(backend) / 'ns/pid') != host['pid']:
@@ -127,7 +136,7 @@ def run(args):
         raise ValueError('validation artifact inventory is not anchored by image lock')
     probe_image = image_lock['test_images']['proc_transfer_probe']
     image_versions = (BASE / 'image-versions.json').read_bytes()
-    if (image_lock['schema_version'] != 1 or
+    if (image_lock['schema_version'] != 1 or image_lock.get('build_profile') != BUILD_PROFILE or
             image_lock['source_lock_sha256'] != artifacts['source_lock_sha256'] or
             hashlib.sha256(image_versions).hexdigest() != image_lock['image_versions_sha256']):
         raise ValueError('validation image/source record mismatch')
@@ -151,17 +160,22 @@ def run(args):
     if image not in allowed or len(image_rows) != 1 or image_rows[0][2] != probe_image['oci_digest']:
         raise ValueError('owned probe is not using the locked imported image')
     metadata = json.loads(args.metadata.read_text())
+    if metadata['proc_transfer'].get('build_profile') != BUILD_PROFILE:
+        raise ValueError('validation/production build profile mismatch')
     if metadata['build_mode'] != 'release' or artifacts['revision'] != metadata['proc_transfer']['lock']['revision']:
         raise ValueError('validation/production revision mismatch')
+    outputs = metadata['proc_transfer'].get('output_sha256', {})
+    if set(outputs) != set(PRODUCTION_BINARIES) or any(outputs[name] != metadata['binary_sha256'][name] for name in outputs):
+        raise ValueError('production triple inventory mismatch')
     source_digest = metadata['source_inputs_sha256']['build/proc-transfer.lock.json']
     if source_digest != artifacts['source_lock_sha256']:
         raise ValueError('validation/production source lock mismatch')
     local = Path('/usr/local')
-    for name in ('sysbox-fs', 'proc-mount-helper'):
+    for name in PRODUCTION_BINARIES:
         path = local / 'lib/containers/sysbox-fs' / name
         st = path.stat()
         if path.is_symlink() or st.st_uid != 0 or st.st_gid != 0 or st.st_mode & 0o777 != 0o755 or digest(path) != metadata['binary_sha256'][name]:
-            raise ValueError('installed pair hash/ownership mismatch')
+            raise ValueError('installed triple hash/ownership mismatch')
     for name in ('sysbox-runc', 'sysbox-mgr', 'sysbox-fs'):
         if digest(local / 'bin' / name) != metadata['binary_sha256'][name]:
             raise ValueError('installed runtime front path mismatch')
@@ -183,6 +197,11 @@ def run(args):
             relative = Path(name)
             if not relative.is_absolute() or '..' in relative.parts or digest(proc / 'root' / str(relative).lstrip('/')) != sha:
                 raise ValueError('probe binary differs from fixed image build')
+        for name, sha in artifacts['artifact_sha256'].items():
+            if name.startswith('oracle/'):
+                path = proc / 'root/tmp/issue5-repo' / name.removeprefix('oracle/')
+                if path.is_symlink() or digest(path) != sha:
+                    raise ValueError('self-contained upstream oracle mismatch')
         uid, gid = mapped(proc / 'uid_map', 1001), mapped(proc / 'gid_map', 1001)
         status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
         if int(status['Uid'].split()[1]) != uid or int(status['Gid'].split()[1]) != gid or int(status['Seccomp']) != 2 or int(status['CapEff'], 16) != 0 or int(status['NoNewPrivs']) != 1:
@@ -191,7 +210,10 @@ def run(args):
             raise ValueError('dedicated probe contains unexpected processes before verification')
         result = {'architecture': 'amd64', 'kernel': os.uname().release,
                   'revision': artifacts['revision'], 'runtime_binary_sha256': metadata['proc_transfer']['output_sha256'],
-                  'validation_image_oci_digest': probe_image['oci_digest'],
+                  'build_profile': BUILD_PROFILE, 'validation_image_oci_digest': probe_image['oci_digest'],
+                  'unrun': {'failure_helper_injection': 'Requires separately approved disposable daemon; installed consumer is never reconfigured',
+                            'complete_policy_dentry': 'Requires disposable container with masks, RO paths and nested protection before registration',
+                            'outer_mapped_root_write_policy': 'Requires separately registered disposable mapped-root container'},
                   'probe_security_context': {'uid': 1001, 'gid': 1001, 'runAsNonRoot': True,
                     'allowPrivilegeEscalation': False, 'capabilities_drop': ['ALL'],
                     'kubernetes_outer_seccomp': 'Unconfined', 'sysbox_seccomp': 2,
@@ -227,6 +249,7 @@ def run(args):
                 for tool, command in [('probe_python', ['python3', '--version']), ('probe_cc', ['cc', '--version'])]:
                     result['versions'][tool] = subprocess.check_output([*prefix, *command], env=dict(env, PROC_TRANSFER_EXEC_TIMEOUT='10'), text=True, timeout=35).splitlines()[0]
                 check('actual_sysbox_original_protections_sys_nonleader', [*prefix, 'bash', str(BASE / 'runtime/verify.sh'), host['pid'], host['user']])
+                check('actual_sysfs_network_fuse_mappedroot_nonleader', [*prefix, 'python3', str(BASE / 'sysfs_runtime.py')], 575, 550)
                 check('concurrent_mounts_reaping', [*prefix, 'python3', str(BASE / 'runtime/stress-proc.py')], 345, 300)
                 # Only the direct-helper fixtures enter via trusted nsenter to
                 # avoid an inherited notification listener. The actual-path
@@ -234,16 +257,22 @@ def run(args):
                 direct = ['nsenter', '--target', str(outer), '--user', '--mount', '--pid', '--net', '--ipc', '--uts', '--cgroup', '--root', '--wd',
                           '--setuid', '1001', '--setgid', '1001', '/usr/bin/env', 'PATH=/usr/bin:/bin']
                 common = ['--outer-pid', str(outer), '--uid', '1001', '--gid', '1001']
-                for mode in ('wrong-owner', 'dead-requester', 'unsupported-flags', 'mapped-launcher'):
-                    check('reject_' + mode, ['python3', str(BASE / 'runtime/helper-rejections.py'), *common,
-                          '--helper', '/usr/local/lib/containers/sysbox-fs/proc-mount-helper', '--mode', mode, '--exec', *direct])
-                for kind in ('leader', 'nonleader'):
-                    for stage in ('launch', 'staging', 'transfer', 'commit'):
-                        for action in ('interrupt', 'thread-exit', 'process-exit', 'exec'):
-                            label = '_'.join(('checkpoint', kind, stage, action))
-                            check(label, ['python3', str(BASE / 'runtime/checkpoints.py'), *common,
-                                  '--helper', str(BASE / 'helper-checkpoint'), '--requester', str(BASE / 'checkpoint-requester'),
-                                  '--requester-kind', kind, '--stage', stage, '--action', action, '--exec', *direct])
+                for filesystem in ('proc', 'sysfs'):
+                    modes = ['wrong-owner', 'dead-requester', 'unsupported-flags', 'mapped-launcher']
+                    if filesystem == 'sysfs': modes += ['wrong-network', 'deeper-user', 'backing-symlink']
+                    for mode in modes:
+                        check(filesystem + '_reject_' + mode, ['python3', str(BASE / 'runtime/helper-rejections.py'), *common,
+                              '--filesystem', filesystem, '--helper', '/usr/local/lib/containers/sysbox-fs/' + filesystem + '-mount-helper',
+                              '--mode', mode, '--exec', *direct])
+                    helper, requester = (('helper-checkpoint', 'checkpoint-requester') if filesystem == 'proc'
+                                         else ('sysfs-checkpoint', 'checkpoint-sysfs'))
+                    for kind in ('leader', 'nonleader'):
+                        for stage in ('launch', 'staging', 'transfer', 'commit'):
+                            for action in ('interrupt', 'thread-exit', 'process-exit', 'exec'):
+                                label = '_'.join((filesystem, 'checkpoint', kind, stage, action))
+                                check(label, ['python3', str(BASE / 'runtime/checkpoints.py'), *common,
+                                      '--filesystem', filesystem, '--helper', str(BASE / helper), '--requester', str(BASE / requester),
+                                      '--requester-kind', kind, '--stage', stage, '--action', action, '--exec', *direct])
                 result['cleanup'] = 'failed'
                 verify_exec_cleanup(args.container, outer)
                 result['checks']['owned_probe_process_cleanup'] = 'passed'

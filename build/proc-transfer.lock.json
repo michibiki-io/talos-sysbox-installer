@@ -1,5 +1,5 @@
 {
-  "contract": "proc-transfer-v1-thread-pidfd",
+  "contract": "proc-sysfs-transfer-v1-thread-pidfd",
   "input_sha256": {
     ".dockerignore": "af98752c954b397b9addf292bfe5534963dfbf83217f3e21575322bf5e8e2c2d",
     ".gitattributes": "9a9d7f64bf122b583d39f211cd2d3e8a7545bc3e8870b1275847deec9d416586",

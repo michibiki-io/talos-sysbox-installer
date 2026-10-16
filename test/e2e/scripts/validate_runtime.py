@@ -29,6 +29,26 @@ def verify_source_inputs(metadata, selected_lock):
             raise RuntimeError('artifact source inputs differ from selected inputs; rebuild first')
 
 
+def installed_hashes(metadata):
+    """Exact enabled production inventory for API reads and supporting checks."""
+    integration = metadata.get('proc_transfer', {})
+    if integration.get('build_profile') != 'proc-sysfs-fuse-v1':
+        raise RuntimeError('production build profile mismatch')
+    binaries = metadata['binary_sha256']
+    daemons = ('sysbox-runc', 'sysbox-mgr', 'sysbox-fs')
+    helpers = ('proc-mount-helper', 'sysfs-mount-helper')
+    outputs = integration.get('output_sha256', {})
+    if (set(binaries) != set(daemons + helpers) or set(outputs) != {'sysbox-fs', *helpers}
+            or any(outputs[name] != binaries[name] for name in outputs)):
+        raise RuntimeError('production triple inventory mismatch')
+    expected = {'/usr/local/bin/' + name: binaries[name] for name in daemons}
+    for name in ('sysbox-fs', *helpers):
+        expected['/usr/local/lib/containers/sysbox-fs/' + name] = binaries[name]
+    for daemon in ('sysbox-mgr', 'sysbox-fs'):
+        expected['/usr/local/lib/containers/' + daemon + '/supervisor'] = metadata['supervisor_sha256']
+    return expected
+
+
 class Runner:
     def __init__(self, args):
         self.args = args
@@ -95,6 +115,7 @@ class Runner:
         metadata=json.loads(self.args.build_metadata.read_text())
         if metadata.get('build_mode')!='release':
             raise RuntimeError('only a completed production build may be validated')
+        expected = installed_hashes(metadata)
         verify_source_inputs(metadata,self.args.lock)
         nodes=json.loads(self.k(['get','nodes','-o','json']))['items']
         matches=[n for n in nodes if n['metadata']['name']==self.args.expected_node]
@@ -110,18 +131,13 @@ class Runner:
             if not all((self.args.talosconfig,self.args.talos_context,self.args.endpoint,self.args.node_address)):
                 raise RuntimeError('real Talos validation requires explicit Talos API connection inputs for installed-artifact verification')
             connection=['talosctl','--talosconfig',str(self.args.talosconfig.resolve()),'--context',self.args.talos_context,'--endpoints',self.args.endpoint,'--nodes',self.args.node_address]
-            expected={('/usr/local/bin/'+name):sha for name,sha in metadata['binary_sha256'].items() if name != 'proc-mount-helper'}
-            expected['/usr/local/lib/containers/sysbox-fs/proc-mount-helper']=metadata['binary_sha256']['proc-mount-helper']
-            expected['/usr/local/lib/containers/sysbox-fs/sysbox-fs']=metadata['binary_sha256']['sysbox-fs']
-            for daemon in ('sysbox-mgr','sysbox-fs'):
-                expected['/usr/local/lib/containers/'+daemon+'/supervisor']=metadata['supervisor_sha256']
             for path,sha in expected.items():
                 response=subprocess.run([*connection,'read',path],capture_output=True,timeout=45)
                 if response.returncode or hashlib.sha256(response.stdout).hexdigest()!=sha:
                     raise RuntimeError('installed runtime artifact does not match this build')
         rc=json.loads(self.k(['get','runtimeclass','sysbox-runc','-o','json']))
         if rc['handler']!='sysbox-runc': raise RuntimeError('unexpected RuntimeClass')
-        result={'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':'amd64','runtime_binary_sha256':metadata['binary_sha256'],'supervisor_sha256':metadata['supervisor_sha256'],'checks':{},'cleanup':'unrun','passed':False}
+        result={'build_profile': metadata['proc_transfer']['build_profile'], 'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':'amd64','runtime_binary_sha256':metadata['binary_sha256'],'supervisor_sha256':metadata['supervisor_sha256'],'checks':{},'cleanup':'unrun','passed':False}
         created=False
         try:
             ns={'apiVersion':'v1','kind':'Namespace','metadata':{'name':self.namespace,'labels':{'pod-security.kubernetes.io/enforce':'privileged'}}}

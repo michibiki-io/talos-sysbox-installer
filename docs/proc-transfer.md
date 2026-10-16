@@ -1,4 +1,4 @@
-# Proc transfer integration / Proc transfer の取り込み
+# Proc and sysfs transfer integration / proc と sysfs transfer の取り込み
 
 ## Contents / 目次
 
@@ -8,18 +8,22 @@
   - [Validation artifacts](#validation-artifacts)
   - [Approved operator verification](#approved-operator-verification)
   - [Evidence boundaries](#evidence-boundaries)
+  - [Sysfs prerequisites and runtime route](#sysfs-prerequisites-and-runtime-route)
+  - [Official-release actual-Talos checklist](#official-release-actual-talos-checklist)
 - [日本語](#日本語)
   - [ソースの選択と更新](#ソースの選択と更新)
   - [ビルドと有効化](#ビルドと有効化)
   - [検証用成果物](#検証用成果物)
   - [承認後の運用者検証](#承認後の運用者検証)
   - [検証結果の範囲](#検証結果の範囲)
+  - [sysfs の前提と実行経路](#sysfs-の前提と実行経路)
+  - [正式リリース後の実 Talos チェックリスト](#正式リリース後の実-talos-チェックリスト)
 
 ## English
 
 ### Source selection and updates
 
-[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `450a656b3722f4281d6812e465a2c0fd65091915` and archive SHA-256 `a265d00a66eca7d73d790356f7282e5383c3b0c422b17c912d80590e4f6268cd`. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. New sysfs/FUSE behavior and arm64 expansion are separate features.
+[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `450a656b3722f4281d6812e465a2c0fd65091915` and archive SHA-256 `a265d00a66eca7d73d790356f7282e5383c3b0c422b17c912d80590e4f6268cd`. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. This profile also enables fresh nested sysfs mounts and virtual-network FUSE repairs. arm64 expansion remains outside scope.
 
 The builder downloads the immutable public archive, verifies its actual SHA-256 and complete regular-file inventory, then checks the upstream source manifest against the downstream root/fs/runc/ipc/libs/fuse revisions and repositories. Missing files, hash/revision differences, unsupported manifests, helper contracts, archive links/path traversal and patch scope stop the build. Nothing reads an inspection checkout or private evidence at build/runtime. There is no branch-following service.
 
@@ -34,27 +38,27 @@ python3 scripts/build.py --builder ISOLATED_BUILDER --output .build/selected-upd
 python3 scripts/build_validation_image.py --builder ISOLATED_BUILDER --output .build/selected-validation
 ```
 
-The six-component adapter maps `fuse` to the existing `versions.lock.json` `sysbox-fs/bazil` pin (`nestybox/fuse`, revision `5ce319439091b08f33b149cb2482039f1b0a24fe`). The catalog must match exactly: unknown, missing or extra components, repository/revision/hash mismatches and unsupported recipe/ABI contracts fail closed. The archive inventory includes unused sysfs/FUSE sources and runtime fixtures; their presence does not authorize executing the upstream build recipe or building/applying its new helper/patch. Production still applies only `patches/proc-transfer.patch` and builds only `helper/proc-mount-helper.c`.
+The six-component adapter maps `fuse` to the existing `versions.lock.json` `sysbox-fs/bazil` pin (`nestybox/fuse`, revision `5ce319439091b08f33b149cb2482039f1b0a24fe`). The catalog must match exactly: unknown, missing or extra components, repository/revision/hash mismatches and unsupported recipe/ABI contracts fail closed. The production allowlist contains exactly `helper/proc-mount-helper.c`, `helper/sysfs-mount-helper.c`, `patches/proc-transfer.patch` and `patches/sysfs-transfer.patch`. Unknown helper/patch inputs are rejected. The proc FD/argument ABI and patch scope remain checked; the sysfs patch scope includes the local bazil dependency. The upstream mutable apt recipe is never executed.
 
-The updater refuses to overwrite the authoritative lock and compares both production inputs against the previous approved lock, rejecting even self-consistent upstream hash updates that change either file. Relative to reviewed revision `ab02207dafe00284797f64becd214c10e1c99285`, helper SHA-256 remains `78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208` and proc patch SHA-256 remains `d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838`. A new ABI/build contract needs an adapter change and review. Updating checksums cannot confer support for new mount types or architectures. Repeat both installer builds, selected upstream regressions and Test CI for the published head. Record actual failures, conditional skips and unrun checks separately.
+The updater refuses to overwrite the authoritative lock and compares all four production inputs against the previous approved lock, rejecting even self-consistent upstream hash updates that change any of those files. Relative to reviewed revision `ab02207dafe00284797f64becd214c10e1c99285`, helper SHA-256 remains `78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208` and proc patch SHA-256 remains `d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838`. A new ABI/build contract needs an adapter change and review. Updating checksums cannot confer support for new mount types or architectures. Repeat both installer builds, selected upstream regressions and Test CI for the published head. Record actual failures, conditional skips and unrun checks separately.
 
 ### Build and activation
 
 The existing digest-pinned Go 1.26.2/Ubuntu builder, signed `20261001T000000Z` APT snapshot, finite retries, read-only Go modules and protobuf generator 1.3.2 remain effective inputs. The upstream's Go 1.27.2/generator 1.3.5 are recorded as upstream metadata, not silently adopted.
 
-Standalone runc and mgr compile first from unpatched component sources. Immediately before fs compilation, the integration applies its fs and runc nsenter changes with `patch --batch --forward --fuzz=0` after a successful dry-run. The nsenter C change is linked into fs only. The static production helper compiles from the same verified archive. The builder and final extension layer assertions require a matching amd64 static pair, root ownership and mode 0755; checkpoint tools must be absent from the production rootfs. Both installer variants consume this same verified extension OCI layout.
+Standalone runc and mgr compile first from unpatched component sources. Immediately before fs compilation, the integration applies `proc-transfer.patch` followed by `sysfs-transfer.patch` (including local bazil) with `patch --batch --forward --fuzz=0` after a successful dry-run. The nsenter C change is linked into fs only. Both static production helpers compile from the same verified archive. The builder and final extension layer assertions require a matching amd64 static triple, root ownership and mode 0755; checkpoint tools must be absent from the production rootfs. Both installer variants consume this same verified extension OCI layout.
 
-The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`, visible as backend `/proc-mount-helper`. The supervisor sets `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` in its actual system-containerd fs invocation. Caller environment variables do not configure the daemon. Existing owned backend supervision, node PID entry, mount propagation and runtime registration remain in place. Install the complete installer in an approved maintenance operation, retaining all other required extensions. No machine-config switch or runtime filter change enables this path.
+The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`, visible as backend `/proc-mount-helper`. The sysfs helper is installed alongside it at `sysfs-mount-helper`, visible as `/sysfs-mount-helper`. The supervisor sets both `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` and `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` in its actual system-containerd fs invocation. Caller environment variables do not configure the daemon. Existing owned backend supervision, node PID entry, mount propagation and runtime registration remain in place. Install the complete installer in an approved maintenance operation, retaining all other required extensions. No machine-config switch or runtime filter change enables this path.
 
-`build-metadata.json` records the integration revision, original archive/file/patch/helper hashes, upstream manifest, effective Go/protoc/generator inputs, build scope and paired binary SHA-256 values. Corresponding sources include original archives, patch, effective module locks, generated protobuf sources, linker maps and build recipes. Helper static-library owners use the existing signed-snapshot source/license collection; MIT helper notices and Apache-2.0 patch notices accompany them. Source-before-binary publication, immutable tags, anonymous release pulls and original archive recovery use the existing release mechanism.
+`build-metadata.json` records the integration revision, original archive/file/patch/helper hashes, upstream manifest, effective Go/protoc/generator inputs, build scope and paired binary SHA-256 values. Corresponding sources include original archives, patch, effective module locks, generated protobuf sources, linker maps and build recipes. Helper static-library owners use the existing signed-snapshot source/license collection; MIT helper notices, Apache-2.0 patch notices and the complete bazil BSD terms (`LICENSES/bazil-fuse.txt`) accompany them. Source-before-binary publication, immutable tags, anonymous release pulls and original archive recovery use the existing release mechanism.
 
 ### Validation artifacts
 
-The fixed builder runs the four selected upstream Go regressions and upstream `test_lifecycle.py` C/kernel tests and `test_proc_verifier.py` unprivileged syscall-stub regressions. The latter exercises the actual proc verifier entry points for all optional-entry absence combinations and rejects lost masks, read-only protections, malformed manifests and observation errors. These cover policy normalization, actual-TID acquisition without fallback, invalid-notification launch suppression, real-notification invalidation, signal/thread/process/exec lifecycle, parent-death cleanup and the helper alarm. Kernel/API failures fail the build; no seccomp relaxation obtains a pass. These tests do not run a Talos cluster.
+The fixed builder runs sysfstransfer, registration snapshot/root metadata, Network source/grandchild metadata, protected lookup/owning-container FUSE, bazil lookup identity/Getattr/READDIR dispatch, sysfs static checks and the four existing proc Go regressions and upstream `test_lifecycle.py` C/kernel tests and `test_proc_verifier.py` unprivileged syscall-stub regressions. The latter exercises the actual proc verifier entry points for all optional-entry absence combinations and rejects lost masks, read-only protections, malformed manifests and observation errors. These cover policy normalization, actual-TID acquisition without fallback, invalid-notification launch suppression, real-notification invalidation, signal/thread/process/exec lifecycle, parent-death cleanup and the helper alarm. Kernel/API failures fail the build; no seccomp relaxation obtains a pass. These tests do not run a Talos cluster.
 
-`evidence/validation/` is separate from `evidence/rootfs/`. Its `artifacts.lock.json` records the launcher, container-exec wrapper, idle-probe program, upstream runtime sources, static checkpoint helper/requester and static ctr hashes. The checkpoint helper includes the production C source with test pauses and is never the installed helper.
+`evidence/validation/` is separate from `evidence/rootfs/`. Its `artifacts.lock.json` records the launcher, container-exec wrapper, idle-probe program, upstream runtime sources, static proc/sysfs checkpoint helper/requester, real-path `thread-sysfs`, test-only failure helper and static ctr hashes. It also inventories the complete unchanged upstream oracle tree, copied inside the image at `/tmp/issue5-repo` during the build, before export. The launcher checks that oracle in the actual probe process root. No workspace path or fixture rewrite after export is needed. The checkpoint helper includes the production C source with test pauses and is never the installed helper.
 
-The separate `validation-probe` target starts from the same fixed builder. It builds bubblewrap **0.12.0** from a public SHA-256-verified archive, and preinstalls C compiler, Python 3.12+, nsenter and ctr. It records effective versions, matching signed-snapshot package sources and licenses. The default image user is UID/GID 1001. Verification installs no packages.
+The separate `validation-probe` target starts from the same fixed builder. It builds bubblewrap **0.12.0** from a public SHA-256-verified archive, and preinstalls C compiler, Python 3.12+, nsenter, unshare (util-linux) and ip (iproute2). It also includes ctr as a separate validation artifact. It records effective versions, matching signed-snapshot package sources and licenses. The default image user is UID/GID 1001. Verification installs no packages.
 
 The post-merge release build uses `scripts/build.py --with-probe` to add the optional dedicated probe to the existing `images.json` release inputs. Its immutable tag is `talos-sysbox-proc-transfer-probe:vPROJECT-talos-vTALOS`. The existing publisher checks every selected tag before any push; staging retains the original `probe-image.tar` alongside all original installer archives before the `images.json` completion marker. Recovery validates the original archive checksum, config digest and tag before loading it. Older releases without a probe retain their three-image contract.
 
@@ -121,25 +125,45 @@ kubectl --kubeconfig CONFIG --context CONTEXT -n OWNED_NAMESPACE exec proc-trans
 kubectl --kubeconfig CONFIG --context CONTEXT delete namespace OWNED_NAMESPACE --wait=true --timeout=120s
 ```
 
-The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter hashes, every validation artifact hash and the installed pair/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/node PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
+The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter/unshare (util-linux)/ip (iproute2) hashes, every validation artifact hash and the installed triple/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/node PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
 
 Each exec allocates one private mode-0700 directory below the launcher Pod's `/tmp`, ignoring `TMPDIR`. The fixed ctr receives `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY` (the absolute path appended after `root`); hostPID and the live wrapper process let both client and host daemon/shim resolve the same FIFO inodes. A Pod-only `/tmp` spelling is insufficient for the daemon. The wrapper verifies directory identity/mode, keeps it alive through the exec deadline (1–600 seconds) and, on exceptions/cancellation, through the bounded 15-second deletion attempt for only its unique exec ID, then removes it. Cleanup failures remain failures requiring owned-namespace cleanup. Host containerd mounts remain read-only.
 
-Actual-path execution uses ctr task exec with UID/GID 1001 and retains the runtime filter. It runs the unchanged original bwrap command, PID/User/seccomp checks, registered mask/read-only/detach protections, recursive read-only procfs, existing `/sys` bind, both real nonleader mount cases and 500 concurrent mounts with reaping. The stress exec has a 300-second deadline plus bounded cleanup allowance; interruption force-deletes only its unique server exec ID. Failed/time-limited checks never mark cleanup passed; deletion of the owned namespace remains a separate operator step. Helper arguments remain outer-User-namespace UID/GID 1001; host-mapped IDs are used only for process credential checks. Then it runs all four rejection modes and all 32 leader/nonleader checkpoint cases. Only these direct-helper fixtures enter via trusted nsenter to create their own listener; they do not alter any service or running process's filter. Each fixture closes descriptors and reaps uniquely identified owned actors. A final independent containerd process inventory must show only the pinned idle probe before cleanup passes; `namespace_cleanup` stays unrun for the separate operator deletion. The result distinguishes actual-path and checkpoint checks. Missing capabilities/APIs, wrong versions/hashes, observer errors and timeouts fail rather than skip. Preserve raw logs privately; publish only sanitized result JSON and record the final namespace cleanup outcome separately. If cache cleanup is approved too, use the bootstrap ctr to remove only this generated `local_tag` after deleting the probe/launcher Pods; never prune the node image store. Then delete the owned namespace (including bootstrap).
+Actual-path execution uses ctr task exec with UID/GID 1001 and retains the runtime filter. It runs the unchanged original bwrap command, PID/User/seccomp checks, registered mask/read-only/detach protections, recursive read-only procfs, existing `/sys` bind, both real nonleader mount cases and 500 concurrent mounts with reaping. The stress exec has a 300-second deadline plus bounded cleanup allowance; interruption force-deletes only its unique server exec ID. Failed/time-limited checks never mark cleanup passed; deletion of the owned namespace remains a separate operator step. Helper arguments remain outer-User-namespace UID/GID 1001; host-mapped IDs are used only for process credential checks. It additionally runs the actual sysfs/FUSE suite described below, all four proc and seven sysfs rejection modes, and each filesystem’s 32 leader/nonleader checkpoint cases. Only these direct-helper fixtures enter via trusted nsenter to create their own listener; they do not alter any service or running process's filter. Each fixture closes descriptors and reaps uniquely identified owned actors. A final independent containerd process inventory must show only the pinned idle probe before cleanup passes; `namespace_cleanup` stays unrun for the separate operator deletion. The result distinguishes actual-path and checkpoint checks. Missing capabilities/APIs, wrong versions/hashes, observer errors and timeouts fail rather than skip. Preserve raw logs privately; publish only sanitized result JSON and record the final namespace cleanup outcome separately. If cache cleanup is approved too, use the bootstrap ctr to remove only this generated `local_tag` after deleting the probe/launcher Pods; never prune the node image store. Then delete the owned namespace (including bootstrap).
 
 ### Evidence boundaries
 
-Talos 1.12.6/kernel 6.18.18-talos remains the amd64 target. Historical v0.3.0 installation and installed hash checks passed, with recovery of the node/workspaces/PVCs and retention of the existing RuntimeClass. Its original launcher failed at the hostPath mount; after a local socket correction, ctr failed at FIFO creation. Locally corrected tooling reached the original UID 1001 bwrap, namespace/seccomp/proc protections and existing sys bind checks, then failed at the old fixture's unconditional `/proc/asound` requirement. Nonleader, stress, rejection/lifecycle and remaining supporting checks were unrun. These partial local results are not official corrected-artifact results.
+The target remains amd64 Talos 1.12.6/kernel 6.18.18-talos with Sysbox 0.7.1, standard and VMware installers. Historical v0.3.1 proc/protection/sys-bind and supporting-runtime results are baseline evidence only. Its UID1001 bwrap fresh-sysfs shared/new Network × RW/RO diagnostic failed EPERM. The separate lower-level unshare diagnostic returned EINVAL even for its bind control; it is a different entry path. Neither old artifact nor upstream arm64/PoC results prove this changed build works on actual Talos.
 
-The selected upstream fix captures all 11 proc candidates before sandbox checks, allows only ENOENT for four kernel-dependent entries (including `/proc/asound`), keeps the three masks mandatory, and checks later entries even after an absent optional item. Recursive-readonly verification receives the captured manifest. No fixture is edited after export.
+The current source contract is `proc-sysfs-transfer-v1-thread-pidfd`; build profile `proc-sysfs-fuse-v1` is required in production metadata, artifact lock and image lock. The fs embedded commit suffix is `+proc-sysfs-transfer.REVISION12`. These distinguish proc+sysfs even when the immutable upstream revision is unchanged. Proc-only/missing/mismatched profiles, source locks, inventories and hashes fail closed. Both installers and the probe must come from the same inputs and outputs.
 
-Updating the source lock changes the production fs embedded integration revision, binary hash and `source_inputs_sha256` even though the proc patch/helper bytes are unchanged. Validation/production revision, source-lock and installed-binary pairing checks remain mandatory. The full new-artifact Talos suite requires matching installer and probe/tool artifacts from the same head, followed by a separately approved installer upgrade and required reboot. Until then retain installed v0.3.0 and the existing RuntimeClass; no split production/test-lock compatibility is supported. Launcher/FIFO-only checks on the old lock do not satisfy this gate.
+Before merge, focused downstream tests, selected upstream fixed-builder tests, both installer/probe/source exports, offline release-asset checks and latest-head Test CI (including Talos-in-Docker supporting checks) must be recorded separately. A compiler/unit-test pass does not establish runtime mount behavior. Failed, conditional-skipped and UNRUN checks remain distinct. Full builds and CI are separate from the focused local edit/test stage.
 
-As of 2026-10-16, source-update evidence for verified implementation head `8b20abeab4a3f2a85c88b2ba124840644f77922e` records a successful fixed-builder build of both installer compositions (standard and VMware), probe/tool artifacts, inventories, image locks, metadata and corresponding sources. All 79 focused local unit tests passed, including portable launcher/FIFO/adapter/updater and build/source/license/publication/recovery regressions. The four native validation groups, including selected upstream build tests, passed with zero conditional skips. All six release assets passed offline validation, including source/license assets and probe/tool inventory; the corresponding-source archive is 1763008854 bytes (<2 GiB). Required [Test CI run 38776850784](https://github.com/michibiki-io/talos-sysbox-installer/actions/runs/38776850784) succeeded for that implementation SHA, with all four native groups passing and zero skips; CI and local build values matched for `binary_sha256`, `supervisor_sha256` and `source_inputs_sha256`. These results describe that verified implementation head, not a later documentation head. CI Talos-in-Docker passed seven supporting checks: direct rootful Docker, privileged child, kind Ready, Helm rollout, Service DNS/TCP, recreated identity/child and ordinary runtime. Namespace and cluster cleanup also succeeded. This amd64 Talos 1.12.6 environment used runner kernel `6.17.0-1022-azure`, not the real Talos kernel.
+Actual Talos, official publication and anonymous pulls of the changed artifacts are **UNRUN**, deferred until human merge, official release and fresh approval naming a concrete target/image/operation. No node upgrade, reboot, cluster mutation, daemon reconfiguration or host policy change is authorized by this implementation. Unavailable disposable fixtures are UNRUN with their prerequisite reason, never silently omitted or treated as passes.
 
-The initial default-network build FAILED before compilation because the Docker bridge was unavailable. The supported `--network host` build then succeeded without persistent host configuration changes; the initial failure is not a product validation pass.
+### Sysfs prerequisites and runtime route
 
-The full corrected-artifact real Talos suite remains UNRUN pending a separately approved matching installer upgrade and required reboot; installed v0.3.0 and the existing RuntimeClass remain retained. The historical v0.3.0 partial results above do not establish new-artifact success. Live publication and anonymous pulls remain UNRUN until the authorized post-merge release. Upstream arm64/Linux 7.1/bwrap 0.9.0 results are historical evidence about different artifacts. Compilation and host-kernel regressions cannot establish that this pair fixes Talos. New nested sysfs and arm64 support are outside this integration. A missing public probe remains a documented distribution limitation, not a fabricated anonymous-pull success.
+Enabled sysfs requires a registered `/sys` root/protection snapshot, readable requester mountinfo, live owned requester thread and a real `/tmp` directory in the registered outer container root. Minimal OCI roots without those prerequisites are unsupported and fail closed. Source-root acquisition, child/shared Network ownership, inherited RO/security floors, masks, detach/remount denial and mapped-root/nonleader rules remain upstream production policy. Do not remove protection or change host filesystems to make a fixture pass.
+
+The existing operator renderer produces manifests plus `operation.json` with the launcher command template. The documented `launcher.py` command above runs `sysfs_runtime.py` through production ctr exec as outer UID/GID1001, CapEff0, NNP1 with Sysbox seccomp mode2. Its executable route runs unchanged upstream `thread-sysfs` fixtures for shared/new Network × RW/RO using the original bwrap path, repeats all four with `unshare --user --map-root-user`, then runs `sysfs-interleave.py` in an owned child Network and `sysfs-write-policy.py` as capable direct-child mapped root in a new loopback-only Network. The thread fixture asserts requester TID/leader separation, independent observer metadata/listing, source identity and unchanged leader interfaces. The interleave fixture preserves upstream cookie semantics: nonzero continuation across Network/list changes is undefined (empty/truncated/EIO allowed), must never leak foreign names, and rewind must yield the exact current set. Lookup/Getattr/Readlink, genuine absence, backing-symlink rejection and explicit acquisition errors retain upstream assertions. Selected Go tests exercise inode identity, fresh attributes, error propagation and READDIR dispatch.
+
+The launcher separately enters only its owned sandbox via trusted nsenter for direct helper rejection and checkpoint matrices. Test-only helpers remain in the validation payload; none enter production rootfs or configure the installed backend. `result.unrun` records the following unavailable prerequisites independently:
+
+- Failure injection: requires a separately approved disposable Sysbox daemon with the test-only `sysfs-failure-helper`, compiled for backend `/sysfs-mount-helper` and task switch `/tmp/issue5-failure-switch` visible identically in caller/helper views. Run `python3 /opt/proc-transfer/runtime/sysfs-failures.py /tmp/issue5-failure-switch` and repeat with `2` and `20` for EIO/ENOENT/ENOTDIR setup failures. Require raw getdents/high-level EIO and unchanged failed-mount target. Never reconfigure the installed consumer daemon. Without that disposable environment: UNRUN, reason “separate failure-helper daemon unavailable”.
+- Complete policy/dentry: requires a disposable container with non-default masks, RO paths and nested protective mounts set **before registration**, including masked `lo/ifalias` and RO self-bind `lo/statistics`. No daemon change is needed. Run the four thread-sysfs cases there and `python3 /opt/proc-transfer/runtime/sysfs-dentry-protection.py` as the capable mapped direct-child observer in its own Mount namespace. Require source identity/mount ID/floors, protected dentry preservation, missing/rejected lookups and detach/remount denial. Omit `--failure-switch` on the installed-helper route. Without this container: UNRUN, reason “pre-registration protective container unavailable”.
+- Outer mapped-root write policy: requires a separately registered mapped-root disposable container with its own newly created loopback-only Network. Run `sysfs-write-policy.py` there as outer UID0 and repeat as capable direct-child root; require nobody ownership, denied writes and unchanged MTU. The default UID1001 probe covers only the latter. Without that registered root container: UNRUN with that reason.
+
+### Official-release actual-Talos checklist
+
+Every item below is currently UNRUN for changed official artifacts. Execute only after release and concrete operation approval; record each result with the exact official digest/profile and sanitized evidence.
+
+1. Verify source-before-binary offering, complete licenses/notices (including bazil BSD), source/archive/config identities, immutable tags and anonymous manifest/all-blob access; verify each release asset is below 2 GiB.
+2. Approve the exact standard or VMware installer and probe digest, target and maintenance/rollback procedure. Preserve required extensions, workloads, PVCs and existing RuntimeClass. After approved install/reboot, verify fs/proc/sysfs root-owned0755 hashes, embedded identity, both helper envs, actual backend executable/namespaces, readiness and owned restart/recovery.
+3. Render the dedicated probe/launcher, verify only read-only `/usr/local` and `/run/containerd` host mounts, original UID/GID1001/CapEff0/NNP1/production seccomp and fixed image/tool/oracle hashes. Run the launcher command above. Keep raw diagnostics private.
+4. Require unchanged proc original-bwrap/protection/sys-bind/nonleader/stress success; fresh sysfs shared/new Network × RW/RO and mapped-root/nonleader success; security floors, mask/RO inheritance, remount/move/detach rejection; FUSE netlink/listing/metadata/offset/rewind/identity/error behavior; all proc/sysfs rejection and lifecycle matrices with owned cleanup.
+5. Run the three separately provisioned fixture categories above; record each UNRUN reason if its environment is unavailable. Failure-helper tests must never target the installed consumer. Complete-policy/dentry tests use pre-registration container protection without daemon changes. Optional dentry failure injection belongs only to the separate failure-helper daemon.
+6. Run supporting direct Docker, privileged child, kind Ready, Helm rollout, Service DNS/TCP, recreated child/identity and default-runtime checks separately. Confirm workloads/PVCs/RuntimeClass are preserved.
+7. Independently verify only the idle probe remains, private FIFO/actors/helpers are reaped, delete only the owned namespace and, if approved, the exact temporary image reference. Record namespace cleanup separately; never prune unrelated resources. Publish sanitized PASS/FAIL/UNRUN outcomes, prerequisites and limitations without private identifiers.
 
 ## 日本語
 
@@ -148,7 +172,8 @@ The full corrected-artifact real Talos suite remains UNRUN pending a separately 
 [build/proc-transfer.lock.json](../build/proc-transfer.lock.json) を取り込みの正本とします。
 公開 upstream の確認済み commit `450a656b3722f4281d6812e465a2c0fd65091915` と、archive SHA-256 `a265d00a66eca7d73d790356f7282e5383c3b0c422b17c912d80590e4f6268cd` を採用します。
 この基準は Sysbox 0.7.1 の component 固定値と一致し、保護された nested procfs と既存 `/sys` tree の bind を扱います。
-新規 sysfs/FUSE と arm64 の拡張は別機能です。
+この profile は新規 nested sysfs mount と virtual-network FUSE 修正も有効にします。
+arm64 の拡張は対象外です。
 
 builder は公開 immutable archive を取得し、実際の SHA-256、全通常ファイルの hash、upstream manifest、root/fs/runc/ipc/libs/fuse の revision と repository を照合します。
 不足、不一致、未対応の manifest/helper 契約、archive の link や path traversal、patch 範囲の違いで停止します。
@@ -157,11 +182,13 @@ builder は公開 immutable archive を取得し、実際の SHA-256、全通常
 更新時は特定 commit をレビューし、英語節の `scripts/update_proc_transfer.py` で新しい候補ファイルを生成します。
 6 component adapter は `fuse` を既存 `versions.lock.json` の `sysbox-fs/bazil` pin（`nestybox/fuse`、revision `5ce319439091b08f33b149cb2482039f1b0a24fe`）へ対応させます。
 component 集合の不足、追加、未知の項目、repository/revision/hash の不一致、未対応の recipe/ABI 契約は拒否します。
-archive inventory には未使用の sysfs/FUSE source と runtime fixture も含まれますが、upstream recipe の実行、新 helper のビルド、新 patch の適用は行いません。
-production は従来の `patches/proc-transfer.patch` と `helper/proc-mount-helper.c` だけを使います。
+production の許可入力は `helper/proc-mount-helper.c`、`helper/sysfs-mount-helper.c`、`patches/proc-transfer.patch`、`patches/sysfs-transfer.patch` の4個です。
+未知の helper／patch は拒否し、proc の FD／引数 ABI と patch 範囲を維持します。
+sysfs patch は local bazil を含みます。
+upstream の mutable apt recipe は実行しません。
 
-updater は正本の上書きを拒否し、両 production 入力を直前の承認済み lock と比較します。
-upstream manifest の hash を同時に更新しても、いずれかの実ファイルが変われば拒否します。
+updater は正本の上書きを拒否し、4個の production 入力を直前の承認済み lock と比較します。
+upstream manifest の hash を同時に更新しても、いずれかの production 実ファイルが変われば拒否します。
 既レビュー revision `ab02207dafe00284797f64becd214c10e1c99285` と比較して、helper SHA-256 は `78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208`、proc patch SHA-256 は `d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838` のままです。
 変更する入力、FD と引数の契約、component と tool の互換性を確認した後、正本を明示的に置き換えます。
 新しい ABI/build 契約には adapter の変更とレビューが必要です。
@@ -173,13 +200,14 @@ upstream manifest の hash を同時に更新しても、いずれかの実フ�
 upstream の Go 1.27.2/generator 1.3.5 は metadata として記録し、無断で採用しません。
 
 単体 runc と mgr を未パッチのソースで先にコンパイルします。
-fs のコンパイル直前に dry-run と `patch --batch --forward --fuzz=0` を実行し、fs とそこへリンクする runc nsenter を変更します。
-同じ検証済み archive から static production helper を生成します。
-builder と最終 extension layer の検査は、amd64 の static pair、root 所有、mode 0755、production rootfs 内に検査 helper がないことを要求します。
+fs のコンパイル直前に dry-run と `patch --batch --forward --fuzz=0` を実行し、`proc-transfer.patch`、`sysfs-transfer.patch` の順で適用し、local bazil と fs へリンクする runc nsenter を含めて変更します。
+同じ検証済み archive から static production helper 2個を生成します。
+builder と最終 extension layer の検査は、amd64 の static triple、root 所有、mode 0755、production rootfs 内に検査 helper がないことを要求します。
 両 installer は、この共通 extension OCI layout を使います。
 
 helper の host path は `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`、backend 内の path は `/proc-mount-helper` です。
-supervisor が実際の system-containerd fs 起動引数へ `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` を設定します。
+sysfs helper も同じ場所の `sysfs-mount-helper` として配置し、backend 内では `/sysfs-mount-helper` になります。
+supervisor が同じ fs backend に `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` と `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` を設定します。
 コンテナ caller の環境変数で daemon を変更することはできません。
 既存の所有 backend の監督、node PID namespace、mount propagation、RuntimeClass の登録を維持します。
 承認された保守操作で、他に必要な extension を含む installer 全体を導入します。
@@ -188,22 +216,26 @@ supervisor が実際の system-containerd fs 起動引数へ `--env=SYSBOX_PROC_
 provenance は revision、元 archive と各入力の hash、patch/helper の hash、実効 Go/protoc/generator、ビルド範囲、生成 binary の hash を記録します。
 対応ソースは元 archive、patch、実効 module lock、生成 protobuf、linker map、recipe を含みます。
 helper が実際にリンクした static library の package にも、既存の署名付き snapshot から対応ソースと license を収集します。
-MIT helper と Apache-2.0 patch の表示を保持し、ソース先行公開、tag 不変、匿名 pull、元 archive の復旧は既存 release 機構を使います。
+MIT helper、Apache-2.0 patch、bazil BSD 全条項（`LICENSES/bazil-fuse.txt`）を収録し、ソース先行公開、tag 不変、匿名 pull、元 archive の復旧は既存 release 機構を使います。
 
 ### 検証用成果物
 
-固定 builder で upstream Go 回帰検査 4 件、`test_lifecycle.py`、非 privileged の syscall stub を使う `test_proc_verifier.py` を実行します。
+固定 builder で sysfstransfer、登録 snapshot／root metadata、Network source／grandchild metadata、FUSE 保護 lookup／owning container、bazil identity／Getattr／READDIR dispatch、sysfs static 検査、既存 proc Go 回帰4件、`test_lifecycle.py`、非 privileged の syscall stub を使う `test_proc_verifier.py` を実行します。
 後者は実 proc verifier の entry point を使い、任意項目の不在の全組み合わせを検査し、mask や read-only 保護の欠落、不正な manifest、観測エラーを拒否します。
 policy normalization、実際の TID の取得と fallback 不在、失効した通知での起動抑止、実通知の失効、signal/thread/process/exec、親終了時の回収、helper alarm を検査します。
 kernel/API エラーは build の失敗とし、seccomp の緩和で合格を得ません。
 Talos cluster は操作しません。
 
 `evidence/validation/` は `evidence/rootfs/` から分離します。
-`artifacts.lock.json` に launcher、exec wrapper、idle probe、upstream runtime source、static checkpoint helper/requester、ctr の hash を記録します。
+`artifacts.lock.json` に launcher、exec wrapper、idle probe、upstream runtime source、proc／sysfs の static checkpoint helper/requester、実経路 `thread-sysfs`、検査専用 failure helper、ctr の hash を記録します。
+上流 oracle tree 全体も inventory に含め、image のビルド時に `/tmp/issue5-repo` へ配置します。
+launcher は実 probe の process root で hash を照合します。
+workspace path や export 後の fixture 書き換えは不要です。
 検査 helper は production C source に確認地点を加えたもので、production helper として導入しません。
 
 別 target の `validation-probe` は同じ固定 builder を使い、公開 SHA-256 固定ソースから bubblewrap 0.12.0 をビルドします。
-C compiler、Python 3.12 以降、nsenter、ctr を事前に導入し、実効版、snapshot package の対応ソースと license を収録します。
+C compiler、Python 3.12 以降、nsenter、unshare（util-linux）、ip（iproute2）を事前に導入し、実効版、snapshot package の対応ソースと license を収録します。
+ctr は別の検証用 artifact として収録します。
 既定ユーザーは UID/GID 1001 で、検証中に package を導入しません。
 
 merge 後の既存 release は `scripts/build.py --with-probe` で専用 probe を任意の追加 image として `images.json` に含めます。
@@ -269,7 +301,7 @@ workstation の Docker へ load するだけでは Talos の CRI に入りませ
 英語節に実行 command と結果の取得手順を示します。
 
 launcher は無関係な workload を拒否し、専用 probe を pidfd で固定します。
-UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter の hash、全検証 artifact の hash、導入した pair の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と node PID namespace を照合します。
+UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter/unshare（util-linux）/ip（iproute2）の hash、全検証 artifact の hash、導入した triple の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と node PID namespace を照合します。
 CRI の config-ID alias を含む実 container image が、固定 manifest digest を指すことも確認します。
 各 exec は launcher Pod の `/tmp` に mode 0700 の private directory を一つ作り、`TMPDIR` は使いません。
 固定 ctr に `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY`（`root` の後に private directory の絶対 path を続ける）を指定します。
@@ -285,7 +317,7 @@ host containerd mount は read-only のままです。
 中断時は固有 exec ID の server process だけを force-delete します。
 失敗や timeout で cleanup の合格を記録せず、専用 namespace の削除は別の操作として残します。
 helper の引数は外側 User namespace の UID/GID 1001 を維持し、host に mapped された ID は process credential の照合だけに使います。
-次に、直接 helper の拒否 4 モードと leader/nonleader の全 32 checkpoint を検査します。
+次に、後述の sysfs 実経路、proc 拒否4モード、sysfs 拒否7モード、各 filesystem の leader/nonleader 全32 checkpoint を検査します。
 この直接検査だけは、独自 listener のため trusted nsenter を使い、service や既存 process の filter を変更しません。
 各 fixture は自身の FD と固有 actor を回収します。
 最後に containerd の独立した process inventory が idle probe だけであることを要求します。
@@ -296,39 +328,58 @@ capability/API の不足、版や hash の不一致、observer failure、timeout
 
 ### 検証結果の範囲
 
-対象は amd64 Talos 1.12.6/kernel 6.18.18-talos です。
-過去の v0.3.0 導入と導入済み hash の確認は成功し、node/workspace/PVC の復帰と既存 RuntimeClass の保持を確認しています。
-元の launcher は hostPath mount で失敗し、ローカルで socket を修正した後は ctr が FIFO の作成で失敗しました。
-ローカル修正版では UID 1001 の元の bwrap、namespace/seccomp/proc 保護、既存 sys bind が成功し、その後に旧 fixture の `/proc/asound` 必須扱いで失敗しました。
-非 leader、stress、拒否/lifecycle、残りの補助検査は未実施です。
-この部分的なローカル結果は、正式な修正版成果物の検証結果ではありません。
+対象は amd64 Talos 1.12.6/kernel 6.18.18-talos、Sysbox 0.7.1 の standard／VMware installer です。
+過去の v0.3.1 proc／保護／既存 sys bind と補助 runtime の成功は baseline です。
+UID1001 bwrap の新規 sysfs は、共有／新規 Network × RW／RO の4条件で EPERM でした。
+別の直接 unshare 診断は bind 対照も EINVAL となった別経路です。
+過去の成果物、上流 arm64、PoC の結果を今回の実 Talos 成功とは扱いません。
 
-採用した upstream 修正は sandbox 検査前に11候補すべてを取得し、`/proc/asound` を含む kernel 依存の4項目だけに ENOENT を許容します。
-3 mask は必須のままで、任意項目の不在後も後続項目を検査します。
-再帰的 read-only 検査には取得済み manifest を渡し、export 後の fixture は編集しません。
+source contract は `proc-sysfs-transfer-v1-thread-pidfd`、production metadata／artifact lock／image lock の必須 profile は `proc-sysfs-fuse-v1` です。
+fs の埋め込み commit suffix は `+proc-sysfs-transfer.REVISION12` です。
+上流 revision が同じでも proc-only と区別し、profile 不足／不一致、source lock、inventory、hash の不一致を拒否します。
+両 installer と probe は同じ入力と出力で照合します。
 
-source lock を更新すると、proc patch/helper の実体が同じでも、production fs の埋め込み revision、binary hash、`source_inputs_sha256` が変わります。
-validation/production の revision、source-lock、導入済み binary の pair 検査を維持します。
-新成果物の実 Talos 完全検証には、同一 head の installer と probe/tool、および別途承認された installer upgrade と必要な reboot が必要です。
-それまでは導入済み v0.3.0 と既存 RuntimeClass を保持します。
-production/test lock を分離する互換契約は導入せず、旧 lock の launcher/FIFO 単独検査でこの条件を満たしたとは扱いません。
+merge 前には、focused 下流検査、固定 builder の選択上流検査、両 installer／probe／対応ソース、offline release asset 検査、最新 head の Test CI（Talos-in-Docker 補助検査を含む）を別々に記録します。
+compile／unit test の成功だけでは mount 動作を証明しません。
+FAILED、条件付き skip、UNRUN を区別し、完全ビルドと CI は focused な編集／検査段階から分離します。
 
-2026-10-16 時点で、検証済み実装 head `8b20abeab4a3f2a85c88b2ba124840644f77922e` の source 更新の証跡では、固定 builder による両 installer 構成（standard と VMware）、probe/tool、inventory、image lock、metadata、対応ソースのビルドが成功しています。
-移植可能な launcher/FIFO/adapter/updater と build/source/license/公開/復旧の回帰検査を含め、ローカルの focused unit test 全79件が成功しました。
-選択した upstream build test を含む native 検証4群も、条件付き skip 0で成功しました。
-source/license 成果物と probe/tool inventory を含む release asset 全6件のオフライン検証が成功し、対応ソース archive は1763008854 bytes（2 GiB 未満）でした。
-必須の [Test CI run 38776850784](https://github.com/michibiki-io/talos-sysbox-installer/actions/runs/38776850784) は、この実装 SHA で成功し、native 4群も skip 0で成功しました。CI とローカルビルドの `binary_sha256`、`supervisor_sha256`、`source_inputs_sha256` は一致しました。
-これらは検証済み実装 head の結果であり、後続の文書修正 head の結果ではありません。
-CI の Talos-in-Docker では、direct rootful Docker、privileged child、kind Ready、Helm rollout、Service DNS/TCP、identity/child の再作成、通常 runtime の補助7検査が成功し、namespace と cluster の cleanup も成功しました。
-この amd64 Talos 1.12.6 環境は runner kernel `6.17.0-1022-azure` を使用しており、実 Talos kernel ではありません。
+変更後の正式成果物による実 Talos、公開、匿名 pull は UNRUN です。
+人間の merge、正式 release、具体的な対象／image／操作の新たな承認後に実施します。
+今回の実装は node upgrade、reboot、cluster 変更、daemon 再設定、host policy 変更を許可しません。
+使い捨て fixture の環境がなければ、前提条件を理由として UNRUN と記録し、省略や成功扱いをしません。
 
-初回の default-network build は、Docker bridge が利用できず、コンパイル前に失敗（FAILED）しました。
-その後、対応済みの `--network host` によるビルドは、host 設定を永続的に変更せず成功しました。初回の失敗を製品検証の合格とは扱いません。
+### sysfs の前提と実行経路
 
-修正版成果物による実 Talos 完全 suite は、対応する installer の upgrade と必要な reboot の別途承認待ちで、未実施（UNRUN）です。導入済み v0.3.0 と既存 RuntimeClass は保持されています。
-前述の過去の v0.3.0 の部分的な結果は、新成果物の成功を示しません。
-実公開と匿名 pull は、承認された merge 後の release まで未実施（UNRUN）です。
-upstream の arm64/Linux 7.1/bwrap 0.9.0 の成功は異なる成果物の過去の結果です。
-コンパイルと host kernel の回帰検査から、今回の pair が Talos を修正したとは主張しません。
-新規 nested sysfs と arm64 は対象外です。
-公開 probe image の不在は配布上の制約として記録し、匿名取得の成功を作りません。
+sysfs 有効時には、登録済み `/sys` root／保護 snapshot、要求元の読み取り可能な mountinfo、生存する所有 requester thread、登録済み outer container root 内の実ディレクトリ `/tmp` が必要です。
+不足する minimal OCI root は未対応で、fail closed になります。
+source root、共有／child 所有 Network、RO／security floor／mask の継承、detach／remount 拒否、mapped-root／非 leader の上流 policy を保持します。
+検査のために保護を解除したり host filesystem を変えたりしません。
+
+既存 operator renderer は manifest と launcher command template を含む `operation.json` を生成します。
+英語節の `launcher.py` command は production ctr exec から `sysfs_runtime.py` を実行し、outer UID/GID1001、CapEff0、NNP1、Sysbox seccomp mode2 を維持します。
+変更していない上流 `thread-sysfs` で元の bwrap の共有／新規 Network × RW／RO を検査し、4条件を `unshare --user --map-root-user` でも繰り返します。
+続いて所有 child Network で `sysfs-interleave.py`、新しい loopback-only Network の capable direct-child root で `sysfs-write-policy.py` を実行します。
+thread fixture は TID／leader の分離、別 observer の metadata／一覧／source identity、leader interface の不変を要求します。
+interleave は上流の cookie 契約を保持します。Network／一覧変更後の非0 offset 継続は未定義（空／途中終了／EIO を許容）ですが、別 Network の名前を漏らさず、rewind 後は現一覧との完全一致を要求します。
+Lookup／Getattr／Readlink、真の不在、backing symlink 拒否、取得エラーの assertion を保持し、選択 Go 検査が inode identity／fresh attribute／error／READDIR dispatch を確認します。
+
+直接 helper 拒否／checkpoint だけは trusted nsenter で所有 sandbox に入ります。
+検査専用 helper は validation にだけ収録し、production rootfs や稼働 backend の設定へ入れません。
+次の前提不足を `result.unrun` に別々に記録します。
+
+- failure injection：別承認の使い捨て Sysbox daemon が必要です。検査専用 `sysfs-failure-helper` はbackend の本番 helper `/sysfs-mount-helper` と、caller／helper から同じ file に見える task switch `/tmp/issue5-failure-switch` 向けにコンパイルします。`python3 /opt/proc-transfer/runtime/sysfs-failures.py /tmp/issue5-failure-switch` と引数 `2`、`20` の各回を実行し、EIO／ENOENT／ENOTDIR の setup failure に対する raw getdents／高水準一覧の EIO と失敗 target 不変を要求します。稼働 consumer daemon は再設定しません。環境がなければ「separate failure-helper daemon unavailable」を理由に UNRUN とします。
+- 完全 policy／dentry：非既定 mask、RO path、入れ子保護 mount を登録前に設定した使い捨てコンテナが必要です。`lo/ifalias` mask と `lo/statistics` の RO self-bind を含め、daemon は変更しません。その環境で thread-sysfs の4条件と、独自 Mount namespace の capable mapped direct-child observer から `python3 /opt/proc-transfer/runtime/sysfs-dentry-protection.py` を実行します。source identity／mount ID／floor、保護 dentry、不在／拒否 lookup、detach／remount 拒否を要求します。本番 helper 経路では `--failure-switch` を付けません。環境がなければ「pre-registration protective container unavailable」を理由に UNRUN とします。
+- outer mapped-root write policy：別途登録した mapped-root の使い捨てコンテナと、新しい loopback-only Network が必要です。outer UID0 と capable direct-child root で `sysfs-write-policy.py` を実行し、nobody 所有、書き込み拒否、MTU 不変を要求します。既定 UID1001 probe は後者だけを検査します。登録済み root コンテナがなければ、その理由で UNRUN とします。
+
+### 正式リリース後の実 Talos チェックリスト
+
+変更後の正式成果物について以下はすべて UNRUN です。
+release と具体的操作の承認後にだけ実施し、正式 digest／profile と安全に整えた証跡に各結果を対応させます。
+
+1. source 先行公開、bazil BSD を含む全 license／notice、source／archive／config identity、immutable tag、匿名 manifest／全 blob、各 asset の 2 GiB 未満を照合します。
+2. standard／VMware installer と probe の正確な digest、対象、保守／rollback 手順を承認します。必要な extension、workload、PVC、RuntimeClass を保持し、承認した導入／reboot 後に fs／proc／sysfs の root 所有0755 hash、埋め込み identity、両 helper env、実 backend exe／namespace、readiness、所有 restart／recovery を照合します。
+3. 専用 probe／launcher を生成し、host mount が read-only `/usr/local` と `/run/containerd` だけであること、元の UID/GID1001／CapEff0／NNP1／production seccomp、image／tool／oracle hash を確認します。英語節の launcher command を実行し、生ログは非公開に保ちます。
+4. 元の proc bwrap／保護／sys-bind／非 leader／stress、新規 sysfs の共有／新規 Network × RW／RO、mapped-root／非 leader、floor／mask／RO 継承、remount／move／detach 拒否、FUSE netlink／一覧／metadata／offset／rewind／identity／error、全 proc／sysfs 拒否／lifecycle と所有 cleanup の成功を要求します。
+5. 上記3分類の別環境 fixture を実行し、環境がなければ分類ごとの UNRUN 理由を記録します。failure helper は稼働 consumer に使いません。完全 policy／dentry は daemon を変更せず登録前の保護設定を使います。任意の dentry failure injection は別の failure-helper daemon だけで行います。
+6. direct Docker、privileged child、kind Ready、Helm rollout、Service DNS/TCP、child／identity の再作成、default runtime を別の補助検査として実行し、workload／PVC／RuntimeClass の保持を確認します。
+7. idle probe だけが残ること、private FIFO／actor／helper の回収を独立して確認し、所有 namespace と、承認があれば正確な一時 image だけを削除します。namespace cleanup は別記録とし、無関係な resource を prune しません。PASS／FAIL／UNRUN、前提、制約を私的識別子なしで公開します。

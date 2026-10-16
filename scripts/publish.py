@@ -68,6 +68,8 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
     if len(images)!=3:raise RuntimeError('release requires extension and both installers')
     if 'probe' in inputs:
+        if inputs['probe']['test_image_lock'].get('build_profile') != 'proc-sysfs-fuse-v1':
+            raise RuntimeError('probe build profile mismatch')
         image=inputs['probe']['image']
         if '/talos-sysbox-proc-transfer-probe:' not in image:
             raise RuntimeError('unexpected probe image')
