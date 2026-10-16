@@ -58,7 +58,7 @@ The fixed builder runs sysfstransfer, registration snapshot/root metadata, Netwo
 
 `evidence/validation/` is separate from `evidence/rootfs/`. Its `artifacts.lock.json` records the launcher, container-exec wrapper, idle-probe program, upstream runtime sources, static proc/sysfs checkpoint helper/requester, real-path `thread-sysfs`, test-only failure helper and static ctr hashes. It also inventories the complete unchanged upstream oracle tree, copied inside the image at `/tmp/issue5-repo` during the build, before export. The launcher checks that oracle in the actual probe process root. No workspace path or fixture rewrite after export is needed. The checkpoint helper includes the production C source with test pauses and is never the installed helper.
 
-The separate `validation-probe` target starts from the same fixed builder. It builds bubblewrap **0.12.0** from a public SHA-256-verified archive, and preinstalls C compiler, Python 3.12+, nsenter and ctr. It records effective versions, matching signed-snapshot package sources and licenses. The default image user is UID/GID 1001. Verification installs no packages.
+The separate `validation-probe` target starts from the same fixed builder. It builds bubblewrap **0.12.0** from a public SHA-256-verified archive, and preinstalls C compiler, Python 3.12+, nsenter, unshare (util-linux) and ip (iproute2). It also includes ctr as a separate validation artifact. It records effective versions, matching signed-snapshot package sources and licenses. The default image user is UID/GID 1001. Verification installs no packages.
 
 The post-merge release build uses `scripts/build.py --with-probe` to add the optional dedicated probe to the existing `images.json` release inputs. Its immutable tag is `talos-sysbox-proc-transfer-probe:vPROJECT-talos-vTALOS`. The existing publisher checks every selected tag before any push; staging retains the original `probe-image.tar` alongside all original installer archives before the `images.json` completion marker. Recovery validates the original archive checksum, config digest and tag before loading it. Older releases without a probe retain their three-image contract.
 
@@ -125,7 +125,7 @@ kubectl --kubeconfig CONFIG --context CONTEXT -n OWNED_NAMESPACE exec proc-trans
 kubectl --kubeconfig CONFIG --context CONTEXT delete namespace OWNED_NAMESPACE --wait=true --timeout=120s
 ```
 
-The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter hashes, every validation artifact hash and the installed triple/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/node PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
+The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter/unshare (util-linux)/ip (iproute2) hashes, every validation artifact hash and the installed triple/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/node PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
 
 Each exec allocates one private mode-0700 directory below the launcher Pod's `/tmp`, ignoring `TMPDIR`. The fixed ctr receives `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY` (the absolute path appended after `root`); hostPID and the live wrapper process let both client and host daemon/shim resolve the same FIFO inodes. A Pod-only `/tmp` spelling is insufficient for the daemon. The wrapper verifies directory identity/mode, keeps it alive through the exec deadline (1–600 seconds) and, on exceptions/cancellation, through the bounded 15-second deletion attempt for only its unique exec ID, then removes it. Cleanup failures remain failures requiring owned-namespace cleanup. Host containerd mounts remain read-only.
 
@@ -234,7 +234,8 @@ workspace path や export 後の fixture 書き換えは不要です。
 検査 helper は production C source に確認地点を加えたもので、production helper として導入しません。
 
 別 target の `validation-probe` は同じ固定 builder を使い、公開 SHA-256 固定ソースから bubblewrap 0.12.0 をビルドします。
-C compiler、Python 3.12 以降、nsenter、ctr を事前に導入し、実効版、snapshot package の対応ソースと license を収録します。
+C compiler、Python 3.12 以降、nsenter、unshare（util-linux）、ip（iproute2）を事前に導入し、実効版、snapshot package の対応ソースと license を収録します。
+ctr は別の検証用 artifact として収録します。
 既定ユーザーは UID/GID 1001 で、検証中に package を導入しません。
 
 merge 後の既存 release は `scripts/build.py --with-probe` で専用 probe を任意の追加 image として `images.json` に含めます。
@@ -300,7 +301,7 @@ workstation の Docker へ load するだけでは Talos の CRI に入りませ
 英語節に実行 command と結果の取得手順を示します。
 
 launcher は無関係な workload を拒否し、専用 probe を pidfd で固定します。
-UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter の hash、全検証 artifact の hash、導入した triple の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と node PID namespace を照合します。
+UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter/unshare（util-linux）/ip（iproute2）の hash、全検証 artifact の hash、導入した triple の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と node PID namespace を照合します。
 CRI の config-ID alias を含む実 container image が、固定 manifest digest を指すことも確認します。
 各 exec は launcher Pod の `/tmp` に mode 0700 の private directory を一つ作り、`TMPDIR` は使いません。
 固定 ctr に `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY`（`root` の後に private directory の絶対 path を続ける）を指定します。
