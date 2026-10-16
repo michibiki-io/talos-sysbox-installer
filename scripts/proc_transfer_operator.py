@@ -15,7 +15,7 @@ import uuid
 def render(lock, node, namespace, token):
     probe = lock['test_images']['proc_transfer_probe']
     public = probe['distribution'] == 'public-registry'
-    if lock['schema_version'] != 1 or probe['distribution'] not in ('public-registry', 'local-archive-import-only') or probe['anonymous_pull_verified'] is not public:
+    if lock['schema_version'] != 1 or lock.get('build_profile') != 'proc-sysfs-fuse-v1' or probe['distribution'] not in ('public-registry', 'local-archive-import-only') or probe['anonymous_pull_verified'] is not public:
         raise ValueError('unverified probe distribution')
     if probe['bubblewrap'] != '0.12.0' or probe['uid'] != 1001 or probe['gid'] != 1001 or not re.fullmatch('sha256:[0-9a-f]{64}', probe['oci_digest']):
         raise ValueError('unsupported probe')
@@ -88,7 +88,10 @@ def main():
         target.write_text(json.dumps(manifest, indent=2) + '\n'); target.chmod(0o600)
     private = args.output / 'operation.json'
     private.write_text(json.dumps({'namespace': namespace, 'token': token, 'image': probe.get('image', probe.get('local_tag')),
-                                   'expected_oci_digest': probe['oci_digest']}, indent=2) + '\n')
+                                   'expected_oci_digest': probe['oci_digest'], 'build_profile': lock['build_profile'],
+                                   'runtime_command': ['python3', '/opt/proc-transfer/launcher.py', '--container', '<owned-container-id>',
+                                                       '--token', token, '--metadata', '<production-metadata.json>',
+                                                       '--image-lock', '<test-images.lock.json>', '--result', '<private-result.json>', '--log', '<private-log>']}, indent=2) + '\n')
     private.chmod(0o600)
     print('Rendered private manifests; cluster operations require the separate target/image/operation approval.')
 

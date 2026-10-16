@@ -49,7 +49,7 @@ LABEL org.opencontainers.image.source="https://github.com/michibiki-io/talos-sys
 
 # Separate validation image; no checkpoint binary or launcher enters extension.
 FROM dependencies AS validation-probe-build
-RUN sh /work/apt_retry.sh install -y --no-install-recommends meson ninja-build libcap-dev util-linux procps
+RUN sh /work/apt_retry.sh install -y --no-install-recommends meson ninja-build libcap-dev util-linux procps iproute2
 COPY --from=assemble /out/validation/ /opt/proc-transfer/
 COPY --from=assemble /out/build-metadata.json /opt/production-build-metadata.json
 COPY --from=assemble /out/rootfs/usr/local/share/licenses/talos-sysbox/ /opt/production-licenses/
@@ -59,6 +59,7 @@ COPY versions.lock.json /work/versions.lock.json
 COPY build/validation_image.py build/validation_packages.py /work/
 RUN python3 /work/validation_image.py && rm -rf /usr/local/go && \
     groupadd --gid 1001 probe && useradd --uid 1001 --gid 1001 --create-home probe && \
+    mkdir -p /tmp/issue5-repo && cp -a /opt/proc-transfer/oracle/. /tmp/issue5-repo/ && chmod -R a+rX /tmp/issue5-repo && \
     chmod -R a+rX /opt/proc-transfer && chmod 755 /opt/proc-transfer/ctr
 # Flatten only the final effective filesystem: replaced packages and removed
 # SDK files in builder layers must never enter the published probe.

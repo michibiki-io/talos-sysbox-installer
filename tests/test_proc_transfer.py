@@ -75,7 +75,9 @@ class Integration(unittest.TestCase):
         changed = ('sysbox-fs/nsenter/event.go', 'sysbox-fs/nsenter/eventService.go', 'sysbox-fs/seccomp/mount.go',
                    'sysbox-fs/seccomp/proc_transfer.go', 'sysbox-fs/seccomp/tracer.go', 'sysbox-runc/libcontainer/nsenter/nsexec.c')
         (root / 'patches/proc-transfer.patch').write_text('\n'.join('+++ b/' + name for name in changed) + '\nconst procPidfdThread = 0x80\nSYSBOX_PROC_TRANSFER_HELPER WithChildReaperGuard NotifIDValid')
-        manifest['source_sha256'] = {name: p.sha256(root / name) for name in ('helper/proc-mount-helper.c', 'patches/proc-transfer.patch')}
+        (root / 'helper/sysfs-mount-helper.c').write_text('sysfs-transfer: 7 requester Network; 10 requester thread pidfd; 200/201; supported sysfs flags; /tmp')
+        (root / 'patches/sysfs-transfer.patch').write_text('\n'.join('+++ b/' + name for name in sorted(p.SYSFS_PATCH_PATHS)) + '\nSYSBOX_SYSFS_TRANSFER_HELPER CaptureSysfsPolicy WithChildReaperGuard')
+        manifest['source_sha256'] = {name: p.sha256(root / name) for name in p.PRODUCTION_INPUTS}
         (root / 'build/sources.lock.json').write_text(json.dumps(manifest))
         return manifest
 
@@ -109,7 +111,7 @@ class Integration(unittest.TestCase):
 
     def test_candidate_updater_checks_baseline_actual_bytes_and_preserves_full_inventory(self):
         updater = OperatorContracts.module('updater', 'scripts/update_proc_transfer.py')
-        for change in ('tests-only', 'helper', 'patch', 'missing-required', 'fuse-pin', 'source-hash', 'contract'):
+        for change in ('tests-only', 'helper', 'patch', 'missing-required', 'fuse-pin', 'source-hash', 'contract', 'sysfs-helper', 'sysfs-patch', 'unknown-production'):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as work:
                 root = Path(work); source = root / 'source'; source.mkdir()
                 manifest = self.fixture(source)
@@ -125,16 +127,18 @@ class Integration(unittest.TestCase):
                 target = {'helper': 'helper/proc-mount-helper.c', 'patch': 'patches/proc-transfer.patch',
                           'tests-only': 'tests/runtime/verify.c', 'missing-required': 'tests/runtime/verify.c',
                           'fuse-pin': 'tests/runtime/verify.c', 'source-hash': 'tests/runtime/verify.c',
-                          'contract': 'tests/runtime/verify.c'}[change]
+                          'contract': 'tests/runtime/verify.c', 'sysfs-helper': 'helper/sysfs-mount-helper.c',
+                          'sysfs-patch': 'patches/sysfs-transfer.patch', 'unknown-production': 'tests/runtime/verify.c'}[change]
                 if change == 'missing-required': (source / target).unlink()
                 else: (source / target).write_text((source / target).read_text() + '\n/* refreshed */')
                 for name in manifest['source_sha256']: manifest['source_sha256'][name] = p.sha256(source / name)
+                if change == 'unknown-production':
+                    (source / 'helper/unknown.c').write_text('unapproved production')
+                    manifest['source_sha256']['helper/unknown.c'] = p.sha256(source / 'helper/unknown.c')
                 if change == 'fuse-pin': manifest['components']['fuse']['revision'] = 'f'*40
                 if change == 'source-hash': manifest['source_sha256']['helper/proc-mount-helper.c'] = 'f'*64
                 if change == 'contract': manifest['builder'] = 'future'
                 (source / 'build/sources.lock.json').write_text(json.dumps(manifest))
-                # Unused upstream sysfs files remain inventoried, never executed.
-                (source / 'helper/sysfs-mount-helper.c').write_text('unused')
                 archive = io.BytesIO()
                 with tarfile.open(fileobj=archive, mode='w:gz') as tf: tf.add(source, arcname='upstream')
                 output = root / 'candidate.json'; revision = 'a' * 40
@@ -156,7 +160,9 @@ class Integration(unittest.TestCase):
 
     def test_approved_production_inputs_remain_previous_reviewed_baseline(self):
         expected = {'helper/proc-mount-helper.c': '78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208',
-                    'patches/proc-transfer.patch': 'd7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838'}
+                    'patches/proc-transfer.patch': 'd7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838',
+                    'helper/sysfs-mount-helper.c': 'cde00c750f1c89f9b61f0e036a39c489510a2fa89594d124635938b88ce2bd54',
+                    'patches/sysfs-transfer.patch': '6880096cc27c9709621f7125786a4f7d4c1234bff2109a35c008cca3711ab3de'}
         self.assertEqual({name: self.lock['input_sha256'][name] for name in expected}, expected)
 
 
@@ -173,6 +179,8 @@ class Integration(unittest.TestCase):
                 path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('fixture')
             (source / 'tests/runtime/sysfs-unused.py').write_text('raise RuntimeError("must not execute")')
             fs = root / 'components/sysbox-fs/seccomp'; fs.mkdir(parents=True)
+            for directory in ('sysfstransfer', 'mount', 'handler/implementations', 'fuse', 'bazil/fs'):
+                (root / 'components/sysbox-fs' / directory).mkdir(parents=True, exist_ok=True)
             def copy(source_path, destination):
                 source_path = Path(source_path)
                 if str(source_path).startswith('/work/project/'):
@@ -183,8 +191,8 @@ class Integration(unittest.TestCase):
             def command(args, **kwargs):
                 commands.append((args, kwargs))
                 if args[0] == 'cc': Path(args[-1]).write_bytes(b'checkpoint tool')
-                return subprocess.CompletedProcess(args, 1 if args[0].endswith('proc-mount-helper') else 0,
-                                                   stdout='', stderr=b'proc-transfer:' if args[0].endswith('proc-mount-helper') else '')
+                return subprocess.CompletedProcess(args, 1 if args[0].endswith('mount-helper') else 0,
+                                                   stdout='', stderr=(b'sysfs-transfer:' if 'sysfs' in args[0] else b'proc-transfer:') if args[0].endswith('mount-helper') else '')
             namespace = {'OUT': root, 'Path': lambda value: ROOT / Path(value).relative_to('/work/project'),
                          'proc_transfer': p, 'integration_record': {'lock': self.lock},
                          'stable_json': json.dumps, 'subprocess': SimpleNamespace(run=command),
@@ -192,17 +200,18 @@ class Integration(unittest.TestCase):
             exec(compile(ast.Module(body=[function], type_ignores=[]), 'build/assemble.py', 'exec'), namespace)
             namespace['build_validation'](source, root / 'components', {'GOFLAGS': '-mod=readonly'})
             python_checks = [args for args, _ in commands if args[0] == 'python3']
-            self.assertEqual([args[args.index('-p')+1] for args in python_checks],
-                             ['test_lifecycle.py', 'test_proc_verifier.py'])
-            self.assertEqual(len(commands), 6)  # Two checkpoint compiles, rejection and three check suites.
+            self.assertEqual([args[args.index('-p')+1] for args in python_checks if '-p' in args],
+                             ['test_lifecycle.py', 'test_proc_verifier.py', 'test_sysfs.py'])
+            self.assertEqual(len(commands), 18)
+            self.assertTrue(any('./sysfstransfer' in args for args, _ in commands))
             for args, kwargs in commands:
-                self.assertFalse(any('sysfs' in value or value.endswith('scripts/build.py') for value in args))
+                self.assertFalse(any(value.endswith('scripts/build.py') for value in args))
             record = json.loads((root / 'validation/artifacts.lock.json').read_text())
             self.assertEqual(record['artifact_sha256']['runtime/sysfs-unused.py'], p.sha256(source / 'tests/runtime/sysfs-unused.py'))
             self.assertEqual(record['revision'], self.lock['revision'])
             self.assertEqual(record['source_lock_sha256'], p.sha256(ROOT / 'build/proc-transfer.lock.json'))
             results = json.loads((root / 'validation/upstream-results.json').read_text())
-            self.assertEqual(len(results), 4)
+            self.assertEqual(len(results), 12)
             self.assertTrue(all(result['status'] == 'passed' for result in results))
 
     def test_full_inventory_detects_changed_missing_and_extra_files(self):
@@ -232,8 +241,9 @@ class Integration(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError): p.apply_patch(root, integration)
             self.assertEqual((root / 'target').read_text(), 'different\nold\nlast\n')
             (root / 'target').write_text('first\nold\nlast\n')
+            (integration / 'patches/sysfs-transfer.patch').write_text('--- a/target\n+++ b/target\n@@ -1,3 +1,3 @@\n first\n-new\n+sysfs\n last\n')
             p.apply_patch(root, integration)
-            self.assertEqual((root / 'target').read_text(), 'first\nnew\nlast\n')
+            self.assertEqual((root / 'target').read_text(), 'first\nsysfs\nlast\n')
 
     def test_patch_dry_run_failure_prevents_application_and_fuzz_is_zero(self):
         with mock.patch.object(p.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'patch')) as command:
@@ -243,14 +253,14 @@ class Integration(unittest.TestCase):
             self.assertIn('--dry-run', command.call_args.args[0])
 
     def image_archive(self, work, *, uid=0, mismatch=False, test_helper=False):
-        values = {'sysbox-fs': b'fs', 'proc-mount-helper': b'helper', 'supervisor': b'supervisor'}
+        values = {'sysbox-fs': b'fs', 'proc-mount-helper': b'helper', 'sysfs-mount-helper': b'sysfs-helper', 'supervisor': b'supervisor'}
         hashes = {name: hashlib.sha256(data).hexdigest() for name, data in values.items()}
         metadata = {'binary_sha256': hashes, 'supervisor_sha256': hashes['supervisor'],
-                    'proc_transfer': {'output_sha256': {name: hashes[name] for name in ('sysbox-fs', 'proc-mount-helper')}}}
+                    'proc_transfer': {'build_profile': p.BUILD_PROFILE, 'output_sha256': {name: hashes[name] for name in p.PRODUCTION_BINARIES}}}
         layer = io.BytesIO()
         with tarfile.open(fileobj=layer, mode='w') as tf:
             names = ['rootfs/usr/local/bin/sysbox-fs'] + ['rootfs/usr/local/lib/containers/sysbox-fs/' + name for name in values]
-            if test_helper: names.append('rootfs/usr/local/lib/containers/sysbox-fs/helper-checkpoint')
+            if test_helper: names.append('rootfs/usr/local/lib/containers/sysbox-fs/' + (test_helper if isinstance(test_helper, str) else 'helper-checkpoint'))
             for name in names:
                 data = b'bad' if mismatch else values.get(Path(name).name, b'test')
                 member = tarfile.TarInfo(name); member.uid = uid; member.mode = 0o755; member.size = len(data)
@@ -265,7 +275,7 @@ class Integration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             archive, metadata = self.image_archive(work)
             self.assertTrue(p.verify_extension_archive(archive, metadata)['test_helpers_absent'])
-            for changes in ({'uid': 1001}, {'mismatch': True}, {'test_helper': True}):
+            for changes in ({'uid': 1001}, {'mismatch': True}, *({'test_helper': name} for name in p.VALIDATION_ONLY)):
                 archive, metadata = self.image_archive(work, **changes)
                 with self.assertRaises(ValueError): p.verify_extension_archive(archive, metadata)
 
@@ -275,6 +285,48 @@ class Integration(unittest.TestCase):
             with self.assertRaises(ValueError): p.verify_pair(local, {'sysbox-fs': 'a' * 64})
             (root / 'sysbox-fs').write_bytes(b'bad'); (root / 'sysbox-fs').chmod(0o755)
             with self.assertRaises(ValueError): p.verify_pair(local, {'sysbox-fs': hashlib.sha256(b'bad').hexdigest()})
+
+    def test_sysfs_production_inventory_and_contract_reject_unknown_and_tampered_inputs(self):
+        for failure in ('unknown', 'missing', 'scope', 'helper-contract', 'unrelated-production'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
+                root = Path(work); manifest = self.fixture(root)
+                if failure == 'unrelated-production':
+                    (root / 'production.go').write_text('unapproved')
+                    manifest['source_sha256']['production.go'] = p.sha256(root / 'production.go')
+                if failure == 'unknown':
+                    (root / 'patches/extra.patch').write_text('unapproved')
+                    manifest['source_sha256']['patches/extra.patch'] = p.sha256(root / 'patches/extra.patch')
+                if failure == 'missing':
+                    del manifest['source_sha256']['helper/sysfs-mount-helper.c']
+                if failure == 'scope':
+                    path = root / 'patches/sysfs-transfer.patch'
+                    path.write_text(path.read_text() + '\n+++ b/sysbox-mgr/main.go')
+                    manifest['source_sha256'][str(path.relative_to(root))] = p.sha256(path)
+                if failure == 'helper-contract':
+                    path = root / 'helper/sysfs-mount-helper.c'; path.write_text('unsupported ABI')
+                    manifest['source_sha256'][str(path.relative_to(root))] = p.sha256(path)
+                (root / 'build/sources.lock.json').write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError): p.verify_manifest(root, self.versions)
+
+    def test_image_profile_and_triple_inventory_reject_proc_only_same_revision(self):
+        with tempfile.TemporaryDirectory() as work:
+            archive, metadata = self.image_archive(work)
+            for failure in ('profile', 'missing-sysfs', 'changed-sysfs'):
+                changed = copy.deepcopy(metadata)
+                if failure == 'profile': changed['proc_transfer']['build_profile'] = 'proc-only'
+                if failure == 'missing-sysfs': changed['proc_transfer']['output_sha256'].pop('sysfs-mount-helper')
+                if failure == 'changed-sysfs': changed['proc_transfer']['output_sha256']['sysfs-mount-helper'] = 'f'*64
+                with self.subTest(failure=failure), self.assertRaises(ValueError):
+                    p.verify_extension_archive(archive, changed)
+
+    def test_patch_order_proc_then_sysfs_and_each_dry_run_precedes_mutation(self):
+        with mock.patch.object(p.subprocess, 'run') as command:
+            p.apply_patch(Path('/source'), Path('/integration'))
+        calls = [c.args[0] for c in command.call_args_list]
+        self.assertEqual([Path(c[c.index('-i')+1]).name for c in calls],
+                         ['proc-transfer.patch']*2 + ['sysfs-transfer.patch']*2)
+        self.assertEqual(['--dry-run' in c for c in calls], [True, False, True, False])
+        self.assertTrue(all('--fuzz=0' in c for c in calls))
 
     def test_runtime_launcher_rejects_invalid_arguments_before_runtime_operations(self):
         result = subprocess.run([sys.executable, str(ROOT / 'build/runtime_launcher.py'), '--container', 'wrong', '--token', 'wrong',
@@ -294,12 +346,12 @@ class OperatorContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)
             values = {name: b'fixed' for name in launcher.REQUIRED_ARTIFACTS}
-            for name in ('ctr', 'helper-checkpoint', 'checkpoint-requester'):
+            for name in launcher.VALIDATION_BINARIES:
                 values[name] = b'\x7fELF\x02\x01' + b'\0' * 12 + b'\x3e\0'
             for name, value in values.items():
                 path = root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(value)
             lock = {'schema_version': 1, 'architecture': 'amd64', 'contract': launcher.CONTRACT,
-                    'launcher_python_minimum': '3.12', 'revision': 'a' * 40, 'source_lock_sha256': 'b' * 64,
+                    'build_profile': p.BUILD_PROFILE, 'launcher_python_minimum': '3.12', 'revision': 'a' * 40, 'source_lock_sha256': 'b' * 64,
                     'artifact_sha256': {name: hashlib.sha256(value).hexdigest() for name, value in values.items()}}
             def save(): (root / 'artifacts.lock.json').write_text(json.dumps(lock))
             save(); launcher.verify_artifacts(root)
@@ -320,7 +372,7 @@ class OperatorContracts(unittest.TestCase):
 
     def test_manifest_renderer_keeps_actual_probe_filter_and_dedicated_trust_scope(self):
         operator = self.module('operator', 'scripts/proc_transfer_operator.py')
-        lock = {'schema_version': 1, 'test_images': {'proc_transfer_probe': {
+        lock = {'schema_version': 1, 'build_profile': p.BUILD_PROFILE, 'test_images': {'proc_transfer_probe': {
             'distribution': 'local-archive-import-only', 'anonymous_pull_verified': False,
             'uid': 1001, 'gid': 1001, 'bubblewrap': '0.12.0', 'oci_digest': 'sha256:' + 'a' * 64,
             'local_tag': 'docker.io/issue5-local/proc-transfer-probe:locked'},
@@ -349,13 +401,34 @@ class OperatorContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             root=Path(work); backend=root/'123'; (backend/'root').mkdir(parents=True); (backend/'ns').mkdir()
             (backend/'exe').write_bytes(b'fs'); (backend/'root/proc-mount-helper').write_bytes(b'helper')
-            (backend/'environ').write_bytes(b'SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper\0')
+            (backend/'root/sysfs-mount-helper').write_bytes(b'sysfs-helper')
+            (backend/'environ').write_bytes(b'SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper\0SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper\0')
             (backend/'ns/user').symlink_to('user:[2]'); (backend/'ns/pid').symlink_to('pid:[1]')
             metadata={'binary_sha256': {'sysbox-fs': hashlib.sha256(b'fs').hexdigest(),
-                                       'proc-mount-helper': hashlib.sha256(b'helper').hexdigest()}}
+                                       'sysfs-mount-helper': hashlib.sha256(b'sysfs-helper').hexdigest(), 'proc-mount-helper': hashlib.sha256(b'helper').hexdigest()}}
             host={'user': 'user:[2]', 'pid': 'pid:[1]'}
             with mock.patch.object(launcher.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)):
                 launcher.verify_backend(123, metadata, host, root)
+                original = (backend/'environ').read_bytes()
+                for changed in (original.replace(b'SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper', b''),
+                                original.replace(b'/sysfs-mount-helper', b'/caller-selected'),
+                                original + b'SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper\0'):
+                    (backend/'environ').write_bytes(changed)
+                    with self.assertRaisesRegex(ValueError, 'environment'): launcher.verify_backend(123, metadata, host, root)
+                (backend/'environ').write_bytes(original)
+                (backend/'root/sysfs-mount-helper').write_bytes(b'tampered')
+                with self.assertRaisesRegex(ValueError, 'path mismatch'): launcher.verify_backend(123, metadata, host, root)
+                (backend/'root/sysfs-mount-helper').write_bytes(b'sysfs-helper')
+                for stat in (SimpleNamespace(st_uid=1001, st_gid=0, st_mode=0o100755),
+                             SimpleNamespace(st_uid=0, st_gid=1001, st_mode=0o100755),
+                             SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100777)):
+                    with mock.patch.object(launcher.Path, 'stat', return_value=stat):
+                        with self.assertRaisesRegex(ValueError, 'path mismatch'): launcher.verify_backend(123, metadata, host, root)
+                (backend/'root/sysfs-mount-helper').unlink()
+                (backend/'root/sysfs-mount-helper').symlink_to('proc-mount-helper')
+                with self.assertRaisesRegex(ValueError, 'path mismatch'): launcher.verify_backend(123, metadata, host, root)
+                (backend/'root/sysfs-mount-helper').unlink()
+                (backend/'root/sysfs-mount-helper').write_bytes(b'sysfs-helper')
                 (backend/'exe').write_bytes(b'stale')
                 with self.assertRaisesRegex(ValueError, 'running fs executable'): launcher.verify_backend(123, metadata, host, root)
                 (backend/'exe').write_bytes(b'fs')
@@ -364,6 +437,29 @@ class OperatorContracts(unittest.TestCase):
                 (backend/'ns/user').unlink(); (backend/'ns/user').symlink_to('user:[2]')
                 (backend/'environ').write_bytes(b'SYSBOX_PROC_TRANSFER_HELPER=/caller-chosen\0')
                 with self.assertRaisesRegex(ValueError, 'environment'): launcher.verify_backend(123, metadata, host, root)
+
+    def test_sysfs_runtime_route_covers_real_path_matrix_without_failure_daemon(self):
+        route = self.module('sysfs_runtime_route', 'build/sysfs_runtime.py')
+        commands = list(route.commands(Path('/tmp/owned-target')))
+        real = [c for c in commands if '/opt/proc-transfer/thread-sysfs' in c]
+        self.assertEqual(len(real), 8)
+        for entry in ('bwrap', 'unshare'):
+            self.assertEqual({tuple(c[-2:]) for c in real if c[0] == entry},
+                             {(mode, network) for mode in ('readwrite', 'readonly') for network in ('shared-net', 'new-net')})
+        self.assertTrue(all('--ro-bind' in c and '/tmp/issue5-repo' in c for c in real if c[0] == 'bwrap'))
+        self.assertTrue(any(c[-2:] == ['/opt/proc-transfer/runtime/sysfs-interleave.py', '/sys'] for c in commands))
+        self.assertTrue(any(c[-1] == '/opt/proc-transfer/runtime/sysfs-write-policy.py' for c in commands))
+        self.assertFalse(any('failure' in arg or 'dentry-protection' in arg for c in commands for arg in c))
+        with mock.patch.object(route.os, 'getuid', return_value=0), mock.patch.object(route.subprocess, 'run') as run:
+            with self.assertRaises(ValueError): route.main()
+            run.assert_not_called()
+
+    def test_proc_only_artifact_and_operator_profiles_are_rejected(self):
+        operator = self.module('profile_operator', 'scripts/proc_transfer_operator.py')
+        for profile in (None, 'proc-only'):
+            lock = {'schema_version': 1, 'build_profile': profile, 'test_images': {
+                'proc_transfer_probe': {'distribution': 'local-archive-import-only'}}}
+            with self.assertRaises(ValueError): operator.render(lock, 'approved', 'owned', 'a'*32)
 
     def test_cleanup_requires_observed_owned_process_inventory(self):
         launcher = self.module('launcher_cleanup', 'build/runtime_launcher.py')
@@ -379,7 +475,7 @@ class OperatorContracts(unittest.TestCase):
         probe = {'distribution': 'public-registry', 'anonymous_pull_verified': True, 'uid': 1001,
                  'gid': 1001, 'bubblewrap': '0.12.0', 'oci_digest': 'sha256:' + 'a'*64,
                  'image': 'ghcr.io/example/talos-sysbox-proc-transfer-probe@sha256:' + 'a'*64}
-        lock = {'schema_version': 1, 'test_images': {'proc_transfer_probe': probe,
+        lock = {'schema_version': 1, 'build_profile': p.BUILD_PROFILE, 'test_images': {'proc_transfer_probe': probe,
                 'proc_transfer_bootstrap': 'busybox@sha256:' + 'b'*64}}
         manifests = operator.render(lock, 'approved', 'owned', 'a'*32)
         self.assertNotIn('bootstrap', manifests)
@@ -422,20 +518,22 @@ class OperatorContracts(unittest.TestCase):
         sha = 'b'*64; revision = 'a'*40
         with tempfile.TemporaryDirectory() as work:
             root = Path(work); (root / 'image-versions.json').write_text('{}')
-            lock = {'schema_version': 1, 'validation_artifacts_lock_sha256': sha,
+            lock = {'schema_version': 1, 'build_profile': p.BUILD_PROFILE, 'validation_artifacts_lock_sha256': sha,
                     'source_lock_sha256': sha, 'image_versions_sha256': hashlib.sha256(b'{}').hexdigest(),
                     'test_images': {'proc_transfer_probe': {'distribution': 'local-archive-import-only',
                      'anonymous_pull_verified': False, 'local_tag': 'probe:fixed',
                      'oci_digest': 'sha256:' + sha, 'config_digest': 'sha256:' + 'c'*64}}}
             image_lock = root / 'images.json'; image_lock.write_text(json.dumps(lock))
             metadata_path = root / 'metadata.json'
-            metadata = {'build_mode': 'release', 'proc_transfer': {'lock': {'revision': revision}},
+            metadata = {'build_mode': 'release', 'proc_transfer': {'build_profile': p.BUILD_PROFILE, 'output_sha256': {name: sha for name in p.PRODUCTION_BINARIES}, 'lock': {'revision': revision}},
                         'source_inputs_sha256': {'build/proc-transfer.lock.json': sha},
-                        'binary_sha256': {name: sha for name in ('sysbox-fs', 'proc-mount-helper', 'sysbox-runc', 'sysbox-mgr')},
+                        'binary_sha256': {name: sha for name in (*p.PRODUCTION_BINARIES, 'sysbox-runc', 'sysbox-mgr')},
                         'supervisor_sha256': sha}
             args = SimpleNamespace(image_lock=image_lock, metadata=metadata_path, container='d'*64)
-            for failure in (None, 'revision', 'source-lock', 'binary'):
+            for failure in (None, 'revision', 'source-lock', 'binary', 'profile', 'inventory'):
                 changed = copy.deepcopy(metadata)
+                if failure == 'profile': changed['proc_transfer']['build_profile'] = 'proc-only'
+                if failure == 'inventory': changed['proc_transfer']['output_sha256'].pop('sysfs-mount-helper')
                 if failure == 'revision': changed['proc_transfer']['lock']['revision'] = 'e'*40
                 if failure == 'source-lock': changed['source_inputs_sha256']['build/proc-transfer.lock.json'] = 'e'*64
                 if failure == 'binary': changed['binary_sha256']['sysbox-fs'] = 'e'*64

@@ -77,7 +77,7 @@ func waitSocket(ctx context.Context, path string) error {
 func (s supervisor) runArgs() []string {
 	a := []string{"--address=" + socket, "--namespace=" + namespace, "run", "--rm", "--rootfs", "--privileged", "--net-host", "--with-ns=pid:/proc/1/ns/pid", "--rootfs-propagation=shared", "--env=PATH=/bin:/usr/bin:/usr/local/bin"}
 	if s.daemon == "sysbox-fs" {
-		a = append(a, "--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper")
+		a = append(a, "--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper", "--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper")
 	}
 	for _, path := range []string{"/run", "/var", "/dev"} {
 		a = append(a, "--mount", "type=bind,src="+path+",dst="+path+",options=rbind:rshared:rw")

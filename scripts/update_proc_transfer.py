@@ -16,6 +16,7 @@ def main():
     parser.add_argument('--revision', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--versions', type=Path, default=ROOT / 'versions.lock.json')
+    parser.add_argument('--archive', type=Path, help='Offline archive for the already approved revision and archive hash only')
     args = parser.parse_args()
     if args.output.resolve() == (ROOT / 'build/proc-transfer.lock.json').resolve() or args.output.exists():
         parser.error('use a new candidate file, then review the diff before replacing the approved lock')
@@ -23,7 +24,12 @@ def main():
     url = integration.archive_url(args.revision)
     with tempfile.TemporaryDirectory() as work:
         archive = Path(work) / 'source.tar.gz'
-        archive.write_bytes(urllib.request.urlopen(url, timeout=120).read())
+        if args.archive:
+            if args.revision != baseline['revision'] or integration.sha256(args.archive) != baseline['sha256']:
+                raise ValueError('offline archive differs from approved immutable source')
+            archive.write_bytes(args.archive.read_bytes())
+        else:
+            archive.write_bytes(urllib.request.urlopen(url, timeout=120).read())
         root = Path(work) / 'source'
         integration.unpack(archive, root)
         integration.verify_manifest(root, json.loads(args.versions.read_text()))

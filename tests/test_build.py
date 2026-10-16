@@ -207,7 +207,7 @@ class ProbePackageTests(unittest.TestCase):
                     'version': '0.12.0', 'url': 'https://example.invalid/bubblewrap.tar.gz',
                     'sha256': hashlib.sha256(data).hexdigest()}}}
                 (root/'work/versions.lock.json').write_text(json.dumps(lock))
-                for name in ('bwrap', 'python3', 'cc', 'nsenter'):
+                for name in ('bwrap', 'python3', 'cc', 'nsenter', 'unshare', 'ip'):
                     (root/'usr/bin'/name).write_bytes(name.encode())
                 def notices(src, dst, **kwargs):
                     dst.mkdir(parents=True); (dst/'copyright').write_text('package license')
@@ -249,12 +249,32 @@ class ProbePackageTests(unittest.TestCase):
                                              for p in sources.iterdir() if p != manifest})
 
 class BuildTests(unittest.TestCase):
+    def test_installed_inventory_checks_both_helpers_at_backend_paths_and_rejects_old_profile(self):
+        binaries = {name: hashlib.sha256(name.encode()).hexdigest() for name in
+                    ('sysbox-runc', 'sysbox-mgr', 'sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')}
+        metadata = {'binary_sha256': binaries, 'supervisor_sha256': 'b'*64,
+                    'proc_transfer': {'build_profile': 'proc-sysfs-fuse-v1', 'output_sha256': {
+                        name: binaries[name] for name in ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')}}}
+        paths = validation.installed_hashes(metadata)
+        self.assertEqual(len(paths), 8)
+        for name in ('proc-mount-helper', 'sysfs-mount-helper'):
+            self.assertEqual(paths['/usr/local/lib/containers/sysbox-fs/' + name], binaries[name])
+            self.assertNotIn('/usr/local/bin/' + name, paths)
+        import copy
+        for failure in ('profile', 'missing', 'unknown', 'mismatch'):
+            changed = copy.deepcopy(metadata)
+            if failure == 'profile': changed['proc_transfer']['build_profile'] = 'proc-only'
+            if failure == 'missing': del changed['binary_sha256']['sysfs-mount-helper']
+            if failure == 'unknown': changed['binary_sha256']['future-helper'] = 'c'*64
+            if failure == 'mismatch': changed['proc_transfer']['output_sha256']['sysfs-mount-helper'] = 'd'*64
+            with self.subTest(failure=failure), self.assertRaises(RuntimeError): validation.installed_hashes(changed)
+
     def probe_inputs(self, root):
         inputs = self.original_archives(root)
         image = 'ghcr.io/example/talos-sysbox-proc-transfer-probe:v0.1.0-talos-v1.12.6'
         build.retag_archive(root/'extension.tar', root/'probe-image.tar', image)
         config = build.archive_config_digest(root/'probe-image.tar')
-        inputs['probe'] = {'image': image, 'test_image_lock': {'schema_version': 1,
+        inputs['probe'] = {'image': image, 'test_image_lock': {'schema_version': 1, 'build_profile': 'proc-sysfs-fuse-v1',
             'test_images': {'proc_transfer_probe': {'local_tag': image, 'oci_digest': 'sha256:local',
             'config_digest': config, 'anonymous_pull_verified': False, 'distribution': 'local-archive-import-only'}}}}
         inputs['image_config_digests'][image] = config
