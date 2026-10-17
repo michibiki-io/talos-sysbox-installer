@@ -124,7 +124,13 @@ Removing Sysbox requires migrating/deleting opted-in workloads and removing its 
 
 ### Proc transfer integration
 
-The protected nested procfs/sysfs integration pins public upstream commit `f29ce39d544e6e470ecd45ccc984d99b19a494c0` in [build/proc-transfer.lock.json](build/proc-transfer.lock.json). The archive SHA-256 is `9a7a58e6a62023d742e5726c0688415e8908622bffc2d292c4b50a60ad6927fd` (55 files). The test-only update adds the portable shared sysfs oracle and selected `tests/static/test_sysfs_oracle.py` regression. Independent rtnetlink observations allow additional default interfaces and the exact regular `bonding_masters` attribute while retaining security assertions; all four production helper/patch inputs remain byte-identical. Standalone runc/mgr compile before patching; fs and both static production helpers build as a verified triple with profile `proc-sysfs-fuse-v1` and patched local bazil. The same fs backend receives both fixed helper environments/paths. See [source updates, activation and operator verification](docs/proc-transfer.md) for the separate validation artifacts, post-merge public-digest probe distribution and explicitly unpublished local bwrap 0.12.0 archive route. Historical v0.4.0 diagnostic results are inherited evidence only; official publication, anonymous retrieval and actual Talos checks of changed artifacts remain UNRUN.
+The protected nested procfs/sysfs integration pins public upstream commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` in [build/proc-transfer.lock.json](build/proc-transfer.lock.json). The archive SHA-256 is `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e` (55 files).
+
+The merged upstream #11 / PR #12 update corrects the shared sysfs oracle and its callers, with 27 selected `tests/static/test_sysfs_oracle.py` regressions. Fresh mounts use `check_fresh_network()` for both class/net and virtual-net; inherited interleave/dentry use `check_fuse_network()` for the per-request virtual-net FUSE view. Inherited native class/net retains its mount-time Network. Write-policy targets only protected FUSE virtual-net, retaining network-owner preflight, nobody ownership, write denial and unchanged MTU. Independent rtnetlink observations allow additional default interfaces and the exact regular `bonding_masters` attribute while retaining security assertions; all four production helper/patch inputs remain byte-identical.
+
+Standalone runc/mgr compile before patching; fs and both static production helpers build as a verified triple with profile `proc-sysfs-fuse-v1` and patched local bazil. The same fs backend receives both fixed helper environments/paths. See [source updates, activation and operator verification](docs/proc-transfer.md) for the separate validation artifacts, post-merge public-digest probe distribution and explicitly unpublished local bwrap 0.12.0 archive route.
+
+The unchanged v0.4.1 actual-Talos suite remains FAILED at inherited interleave after passing proc/protection and eight fresh-sysfs cases; later checks were UNRUN. The separate FUSE diagnostic and upstream static passes are inherited evidence only. The changed revision changes embedded fs identity and requires new output verification. Official publication, anonymous retrieval, actual-Talos checks and the three unavailable separate fixtures for changed artifacts remain UNRUN.
 
 ### Backend trust and supervision
 
@@ -305,7 +311,13 @@ Sysbox の削除は、使用中の Pod の移行と handler と RuntimeClass の
 
 ### Proc transfer の取り込み
 
-公開 upstream の commit `f29ce39d544e6e470ecd45ccc984d99b19a494c0` を [build/proc-transfer.lock.json](build/proc-transfer.lock.json) で固定します。archive SHA-256 は `9a7a58e6a62023d742e5726c0688415e8908622bffc2d292c4b50a60ad6927fd`（55ファイル）です。テストだけを変える更新で portable な共有 sysfs oracle と選択回帰 `tests/static/test_sysfs_oracle.py` を追加します。独立した rtnetlink 観測により追加の既定 interface と正確な通常属性 `bonding_masters` を許容し、保護検査と production helper／patch 4入力の bytes を維持します。単体 runc/mgr は patch 前にコンパイルし、fs と static production helper 2個を `proc-sysfs-fuse-v1` の triple として検証し、local bazil も patch します。同じ実 fs backend に両 helper の環境変数と path を明示します。[更新、有効化、運用者検証](docs/proc-transfer.md) に、production から分離する検証用成果物、merge 後の公開 digest probe 配布、未公開の local bwrap 0.12.0 archive 経路を記載します。過去の v0.4.0 診断結果は継承した参考情報だけで、変更後の正式成果物による公開／匿名取得／実 Talos 検証は UNRUN です。
+公開 upstream の commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` を [build/proc-transfer.lock.json](build/proc-transfer.lock.json) で固定します。archive SHA-256 は `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e`（55ファイル）です。
+
+マージ済みの上流 #11／PR #12 は共有 sysfs oracle と caller を修正し、`tests/static/test_sysfs_oracle.py` の27回帰検査を含みます。新規 mount は `check_fresh_network()` で class/net と virtual-net の両 view を検査します。継承 interleave／dentry は `check_fuse_network()` で要求ごとの virtual-net FUSE view を検査し、native class/net は mount 時の Network を保持します。write-policy は保護された FUSE virtual-net を対象とし、Network 所有の事前確認、nobody 所有、書き込み拒否、MTU 不変を維持します。独立した rtnetlink 観測により追加の既定 interface と正確な通常属性 `bonding_masters` を許容し、保護検査と production helper／patch 4入力の bytes を維持します。
+
+単体 runc/mgr は patch 前にコンパイルし、fs と static production helper 2個を `proc-sysfs-fuse-v1` の triple として検証し、local bazil も patch します。同じ実 fs backend に両 helper の環境変数と path を明示します。[更新、有効化、運用者検証](docs/proc-transfer.md) に、production から分離する検証用成果物、merge 後の公開 digest probe 配布、未公開の local bwrap 0.12.0 archive 経路を記載します。
+
+変更していない v0.4.1 の実 Talos suite は proc／保護検査と新規 sysfs 8条件の成功後、継承 interleave で FAILED となり、後続検査は UNRUN でした。別実行の FUSE 診断と上流 static 検査の成功は継承した参考情報です。revision 更新で fs の埋め込み identity が変わるため、新成果物の照合が必要です。変更後の正式成果物による公開／匿名取得／実 Talos 検証と、環境がない別 fixture 3分類は UNRUN です。
 
 ### backendの特権と監督
 

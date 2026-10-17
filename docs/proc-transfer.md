@@ -23,7 +23,7 @@
 
 ### Source selection and updates
 
-[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `f29ce39d544e6e470ecd45ccc984d99b19a494c0` and archive SHA-256 `9a7a58e6a62023d742e5726c0688415e8908622bffc2d292c4b50a60ad6927fd`. The 55-file immutable inventory includes the merged test-only portability fix. All four production helper/patch inputs remain byte-identical to the previous approved lock. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. This profile also enables fresh nested sysfs mounts and virtual-network FUSE repairs. arm64 expansion remains outside scope.
+[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` and archive SHA-256 `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e`. The 55-file immutable inventory includes merged upstream #11 / PR #12, correcting the fresh-mount versus inherited FUSE-only oracle contract and its callers without changing production behavior. All four production helper/patch inputs remain byte-identical to the previous approved lock. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. This profile also enables fresh nested sysfs mounts and virtual-network FUSE repairs. arm64 expansion remains outside scope.
 
 The builder downloads the immutable public archive, verifies its actual SHA-256 and complete regular-file inventory, then checks the upstream source manifest against the downstream root/fs/runc/ipc/libs/fuse revisions and repositories. Missing files, hash/revision differences, unsupported manifests, helper contracts, archive links/path traversal and patch scope stop the build. Nothing reads an inspection checkout or private evidence at build/runtime. There is no branch-following service.
 
@@ -54,7 +54,7 @@ The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-
 
 ### Validation artifacts
 
-The selected `tests/static/test_sysfs_oracle.py` runs in `build/assemble.py::build_validation`, alongside the existing proc lifecycle/verifier and sysfs/FUSE groups. Its result is recorded in `upstream-results.json`; any failure fails the build. It covers portable default interfaces/optional attributes, preserved security negatives and actual C thread/checkpoint command construction with `-Werror`, without mounts or network changes. No new packages or kernel modules are required.
+The selected `tests/static/test_sysfs_oracle.py` runs in `build/assemble.py::build_validation`, alongside the existing proc lifecycle/verifier and sysfs/FUSE groups. Its result is recorded in `upstream-results.json`; any failure fails the build. Its 27 regressions cover differing inherited native backing, fresh checks of both views, inherited FUSE-only callers, write-policy protections, portable default interfaces/optional attributes, preserved security negatives and actual C thread/checkpoint command construction with `-Werror`, without mounts or network changes. No new packages or kernel modules are required.
 
 The fixed builder runs sysfstransfer, registration snapshot/root metadata, Network source/grandchild metadata, protected lookup/owning-container FUSE, bazil lookup identity/Getattr/READDIR dispatch, sysfs static checks and the four existing proc Go regressions and upstream `test_lifecycle.py` C/kernel tests and `test_proc_verifier.py` unprivileged syscall-stub regressions. The latter exercises the actual proc verifier entry points for all optional-entry absence combinations and rejects lost masks, read-only protections, malformed manifests and observation errors. These cover policy normalization, actual-TID acquisition without fallback, invalid-notification launch suppression, real-notification invalidation, signal/thread/process/exec lifecycle, parent-death cleanup and the helper alarm. Kernel/API failures fail the build; no seccomp relaxation obtains a pass. These tests do not run a Talos cluster.
 
@@ -139,6 +139,8 @@ The target remains amd64 Talos 1.12.6/kernel 6.18.18-talos with Sysbox 0.7.1, st
 
 The inherited v0.4.0 official oracle stopped on regular `bonding_masters` after a successful fresh nested mount. Later diagnostic corrections passed ten sysfs subcases, 79 distinct proc/sysfs checks across a full run and four lifecycle replays, and seven supporting runtime checks on amd64 Talos 1.12.6/VMware. Those modified diagnostic fixtures are not packaged here and do not verify changed official artifacts. Even with identical helper/patch inputs, the new revision changes the fs embedded identity and may change output hashes; rebuild and verify the new installer/probe pair.
 
+The unchanged v0.4.1 actual-Talos official suite passed the original proc/bwrap/protection checks and eight fresh-sysfs cases, then FAILED at interleave: inherited native class/net was compared with the newly entered Network. Later checks were UNRUN. A separate diagnostic found that the per-request virtual-net FUSE view matched its independent observer. That diagnostic and upstream static passes are inherited evidence only, not a pass for these rebuilt artifacts.
+
 The current source contract is `proc-sysfs-transfer-v1-thread-pidfd`; build profile `proc-sysfs-fuse-v1` is required in production metadata, artifact lock and image lock. The fs embedded commit suffix is `+proc-sysfs-transfer.REVISION12`. These distinguish proc+sysfs even when the immutable upstream revision is unchanged. Proc-only/missing/mismatched profiles, source locks, inventories and hashes fail closed. Both installers and the probe must come from the same inputs and outputs.
 
 Before merge, focused downstream tests, selected upstream fixed-builder tests, both installer/probe/source exports, offline release-asset checks and latest-head Test CI (including Talos-in-Docker supporting checks) must be recorded separately. A compiler/unit-test pass does not establish runtime mount behavior. Failed, conditional-skipped and UNRUN checks remain distinct. Full builds and CI are separate from the focused local edit/test stage.
@@ -149,7 +151,11 @@ Actual Talos, official publication and anonymous pulls of the changed artifacts 
 
 Enabled sysfs requires a registered `/sys` root/protection snapshot, readable requester mountinfo, live owned requester thread and a real `/tmp` directory in the registered outer container root. Minimal OCI roots without those prerequisites are unsupported and fail closed. Source-root acquisition, child/shared Network ownership, inherited RO/security floors, masks, detach/remount denial and mapped-root/nonleader rules remain upstream production policy. Do not remove protection or change host filesystems to make a fixture pass.
 
-The existing operator renderer produces manifests plus `operation.json` with the launcher command template. The documented `launcher.py` command above runs `sysfs_runtime.py` through production ctr exec as outer UID/GID1001, CapEff0, NNP1 with Sysbox seccomp mode2. Its executable route runs unchanged upstream `thread-sysfs` fixtures for shared/new Network × RW/RO using the original bwrap path, repeats all four with `unshare --user --map-root-user`, then runs `sysfs-interleave.py` in an owned child Network and `sysfs-write-policy.py` as capable direct-child mapped root after it creates and proves ownership of its own fresh Network. The shared oracle derives the expected interface names, ifindex and MTU independently through rtnetlink in the observer Network. It permits extra default interfaces and the exact regular `bonding_masters` attribute only when absent from that independent interface set; unknown entries, malformed types/metadata, foreign names and observer errors still fail. Hardware-specific lists or optional-attribute presence are not prerequisites. The write-policy preflight precedes all writable opens; nobody ownership, denial and unchanged MTU remain required. The thread fixture asserts requester TID/leader separation, independent observer metadata/listing, source identity and unchanged leader interfaces. The interleave fixture preserves upstream cookie semantics: nonzero continuation across Network/list changes is undefined (empty/truncated/EIO allowed), must never leak foreign names, and rewind must yield the exact current set. Lookup/Getattr/Readlink, genuine absence, backing-symlink rejection and explicit acquisition errors retain upstream assertions. Selected Go tests exercise inode identity, fresh attributes, error propagation and READDIR dispatch.
+The existing operator renderer produces manifests plus `operation.json` with the launcher command template. The documented `launcher.py` command above runs `sysfs_runtime.py` through production ctr exec as outer UID/GID1001, CapEff0, NNP1 with Sysbox seccomp mode2. Its executable route runs unchanged upstream `thread-sysfs` fixtures for shared/new Network × RW/RO using the original bwrap path, repeats all four with `unshare --user --map-root-user`, then runs `sysfs-interleave.py` in an owned child Network and `sysfs-write-policy.py` as capable direct-child mapped root after it creates and proves ownership of its own fresh Network.
+
+Fresh `sysfs-network.py` mounts use `check_fresh_network()` to validate both `/sys/class/net` and `/sys/devices/virtual/net`. Inherited interleave and the dentry absent-interface phase use `check_fuse_network()` only for `/sys/devices/virtual/net`, whose FUSE view follows the requester Network; inherited native class/net retains its mount-time Network and is not compared with the new observer. Interleave retains parent priming, two child Networks, shared-FD continuation/rewind, raw/high-level listing, metadata and negative lookups. Write-policy checks only the protected FUSE virtual-net target.
+
+The shared oracle derives the expected interface names, ifindex and MTU independently through rtnetlink in the observer Network. It permits extra default interfaces and the exact regular `bonding_masters` attribute only when absent from that independent interface set; unknown entries, malformed types/metadata, foreign names and observer errors still fail. Hardware-specific lists or optional-attribute presence are not prerequisites. The write-policy preflight precedes all writable opens; nobody ownership, denial and unchanged MTU remain required. The thread fixture asserts requester TID/leader separation, independent observer metadata/listing, source identity and unchanged leader interfaces. The interleave fixture preserves upstream cookie semantics: nonzero continuation across Network/list changes is undefined (empty/truncated/EIO allowed), must never leak foreign names, and rewind must yield the exact current set. Lookup/Getattr/Readlink, genuine absence, backing-symlink rejection and explicit acquisition errors retain upstream assertions. Selected Go tests exercise inode identity, fresh attributes, error propagation and READDIR dispatch.
 
 The launcher separately enters only its owned sandbox via trusted nsenter for direct helper rejection and checkpoint matrices. Test-only helpers remain in the validation payload; none enter production rootfs or configure the installed backend. `result.unrun` records the following unavailable prerequisites independently:
 
@@ -164,7 +170,7 @@ Every item below is currently UNRUN for changed official artifacts. Execute only
 1. Verify source-before-binary offering, complete licenses/notices (including bazil BSD), source/archive/config identities, immutable tags and anonymous manifest/all-blob access; verify each release asset is below 2 GiB.
 2. Approve the exact standard or VMware installer and probe digest, target and maintenance/rollback procedure. Preserve required extensions, workloads, PVCs and existing RuntimeClass. After approved install/reboot, verify fs/proc/sysfs root-owned0755 hashes, embedded identity, both helper envs, actual backend executable/namespaces, readiness and owned restart/recovery.
 3. Render the dedicated probe/launcher, verify only read-only `/usr/local` and `/run/containerd` host mounts, original UID/GID1001/CapEff0/NNP1/production seccomp and fixed image/tool/oracle hashes. Run the launcher command above. Keep raw diagnostics private.
-4. Require unchanged proc original-bwrap/protection/sys-bind/nonleader/stress success; fresh sysfs shared/new Network × RW/RO and mapped-root/nonleader success; security floors, mask/RO inheritance, remount/move/detach rejection; FUSE netlink/listing/metadata/offset/rewind/identity/error behavior; all proc/sysfs rejection and lifecycle matrices with owned cleanup.
+4. Require unchanged proc original-bwrap/protection/sys-bind/nonleader/stress success; fresh sysfs shared/new Network × RW/RO and mapped-root/nonleader success; security floors, mask/RO inheritance, remount/move/detach rejection; fresh checks of both views and inherited FUSE-only interleave/dentry/write-policy, FUSE netlink/listing/metadata/offset/rewind/identity/error behavior; all proc/sysfs rejection and lifecycle matrices with owned cleanup.
 5. Run the three separately provisioned fixture categories above; record each UNRUN reason if its environment is unavailable. Failure-helper tests must never target the installed consumer. Complete-policy/dentry tests use pre-registration container protection without daemon changes. Optional dentry failure injection belongs only to the separate failure-helper daemon.
 6. Run supporting direct Docker, privileged child, kind Ready, Helm rollout, Service DNS/TCP, recreated child/identity and default-runtime checks separately. Confirm workloads/PVCs/RuntimeClass are preserved.
 7. Independently verify only the idle probe remains, private FIFO/actors/helpers are reaped, delete only the owned namespace and, if approved, the exact temporary image reference. Record namespace cleanup separately; never prune unrelated resources. Publish sanitized PASS/FAIL/UNRUN outcomes, prerequisites and limitations without private identifiers.
@@ -174,8 +180,9 @@ Every item below is currently UNRUN for changed official artifacts. Execute only
 ### ソースの選択と更新
 
 [build/proc-transfer.lock.json](../build/proc-transfer.lock.json) を取り込みの正本とします。
-公開 upstream の確認済み commit `f29ce39d544e6e470ecd45ccc984d99b19a494c0` と、archive SHA-256 `9a7a58e6a62023d742e5726c0688415e8908622bffc2d292c4b50a60ad6927fd` を採用します。
-55ファイルの immutable inventory に、マージ済みのテスト移植性修正を含めます。
+公開 upstream の確認済み commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` と、archive SHA-256 `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e` を採用します。
+55ファイルの immutable inventory に、マージ済みの上流 #11／PR #12 を含めます。
+新規 mount と継承 FUSE の oracle 契約と caller を修正し、production の動作は変更しません。
 production helper／patch 4入力の bytes は直前の承認済み lock と同一です。
 この基準は Sysbox 0.7.1 の component 固定値と一致し、保護された nested procfs と既存 `/sys` tree の bind を扱います。
 この profile は新規 nested sysfs mount と virtual-network FUSE 修正も有効にします。
@@ -228,7 +235,7 @@ MIT helper、Apache-2.0 patch、bazil BSD 全条項（`LICENSES/bazil-fuse.txt`�
 
 `build/assemble.py::build_validation` で `tests/static/test_sysfs_oracle.py` を既存の proc lifecycle／verifier、sysfs／FUSE 群とともに選択実行します。
 結果は `upstream-results.json` に記録し、失敗時は build を失敗させます。
-既定 interface／任意属性の移植性、保護違反の拒否、C thread／checkpoint の実 command 構築を `-Werror` で検査し、mount や Network の変更は行いません。
+27回帰検査で、継承 native backing の差、新規 mount の両 view、継承 FUSE 専用 caller、write-policy 保護、既定 interface／任意属性の移植性、保護違反の拒否、C thread／checkpoint の実 command 構築を `-Werror` で検査し、mount や Network の変更は行いません。
 新しい package や kernel module は不要です。
 
 固定 builder で sysfstransfer、登録 snapshot／root metadata、Network source／grandchild metadata、FUSE 保護 lookup／owning container、bazil identity／Getattr／READDIR dispatch、sysfs static 検査、既存 proc Go 回帰4件、`test_lifecycle.py`、非 privileged の syscall stub を使う `test_proc_verifier.py` を実行します。
@@ -352,6 +359,11 @@ UID1001 bwrap の新規 sysfs は、共有／新規 Network × RW／RO の4条�
 この変更には診断用 fixture を収録せず、その結果を変更後の正式成果物の検証には使いません。
 helper／patch 入力が同じでも、新 revision は fs の埋め込み identity を変え、出力 hash も変わり得るため、新しい installer／probe の組を再ビルドして照合します。
 
+変更していない v0.4.1 の実 Talos 公式 suite は、元の proc／bwrap／保護検査と新規 sysfs 8条件に成功した後、interleave で FAILED となりました。
+継承した native class/net を新しく入った Network と比較したためで、後続検査は UNRUN でした。
+別の診断では、要求ごとの virtual-net FUSE view が独立 observer と一致しました。
+この診断と上流 static 検査の成功は継承した参考情報であり、新成果物の実機検証の成功を示しません。
+
 source contract は `proc-sysfs-transfer-v1-thread-pidfd`、production metadata／artifact lock／image lock の必須 profile は `proc-sysfs-fuse-v1` です。
 fs の埋め込み commit suffix は `+proc-sysfs-transfer.REVISION12` です。
 上流 revision が同じでも proc-only と区別し、profile 不足／不一致、source lock、inventory、hash の不一致を拒否します。
@@ -377,6 +389,11 @@ source root、共有／child 所有 Network、RO／security floor／mask の継�
 英語節の `launcher.py` command は production ctr exec から `sysfs_runtime.py` を実行し、outer UID/GID1001、CapEff0、NNP1、Sysbox seccomp mode2 を維持します。
 変更していない上流 `thread-sysfs` で元の bwrap の共有／新規 Network × RW／RO を検査し、4条件を `unshare --user --map-root-user` でも繰り返します。
 続いて所有 child Network で `sysfs-interleave.py`、capable direct-child root として、自身で新規 Network を作成して所有を証明する `sysfs-write-policy.py` を実行します。
+新規 `sysfs-network.py` mount は `check_fresh_network()` で `/sys/class/net` と `/sys/devices/virtual/net` の両方を検査します。
+継承 interleave と dentry の absent-interface 段階は `check_fuse_network()` で要求元 Network に従う `/sys/devices/virtual/net` の FUSE view だけを検査します。
+native class/net は mount 時の Network を保持するため、新しい observer とは比較しません。
+interleave の親での priming、2個の child Network、共有 FD の継続／rewind、raw／高水準一覧、metadata、negative lookup を維持します。
+write-policy は保護された FUSE virtual-net の target だけを検査します。
 共有 oracle は observer の Network 内の rtnetlink から、期待する interface 名、ifindex、MTU を独立に取得します。
 追加の既定 interface と、独立した interface 集合に含まれない正確な通常属性 `bonding_masters` を許容し、未知項目、不正な型／metadata、他 Network の名前、observer エラーは失敗にします。
 hardware 固有の一覧や任意属性の存在は前提にしません。
@@ -401,7 +418,7 @@ release と具体的操作の承認後にだけ実施し、正式 digest／profi
 1. source 先行公開、bazil BSD を含む全 license／notice、source／archive／config identity、immutable tag、匿名 manifest／全 blob、各 asset の 2 GiB 未満を照合します。
 2. standard／VMware installer と probe の正確な digest、対象、保守／rollback 手順を承認します。必要な extension、workload、PVC、RuntimeClass を保持し、承認した導入／reboot 後に fs／proc／sysfs の root 所有0755 hash、埋め込み identity、両 helper env、実 backend exe／namespace、readiness、所有 restart／recovery を照合します。
 3. 専用 probe／launcher を生成し、host mount が read-only `/usr/local` と `/run/containerd` だけであること、元の UID/GID1001／CapEff0／NNP1／production seccomp、image／tool／oracle hash を確認します。英語節の launcher command を実行し、生ログは非公開に保ちます。
-4. 元の proc bwrap／保護／sys-bind／非 leader／stress、新規 sysfs の共有／新規 Network × RW／RO、mapped-root／非 leader、floor／mask／RO 継承、remount／move／detach 拒否、FUSE netlink／一覧／metadata／offset／rewind／identity／error、全 proc／sysfs 拒否／lifecycle と所有 cleanup の成功を要求します。
+4. 元の proc bwrap／保護／sys-bind／非 leader／stress、新規 sysfs の共有／新規 Network × RW／RO、mapped-root／非 leader、floor／mask／RO 継承、remount／move／detach 拒否、新規 mount の両 view と継承 FUSE 専用 interleave／dentry／write-policy、FUSE netlink／一覧／metadata／offset／rewind／identity／error、全 proc／sysfs 拒否／lifecycle と所有 cleanup の成功を要求します。
 5. 上記3分類の別環境 fixture を実行し、環境がなければ分類ごとの UNRUN 理由を記録します。failure helper は稼働 consumer に使いません。完全 policy／dentry は daemon を変更せず登録前の保護設定を使います。任意の dentry failure injection は別の failure-helper daemon だけで行います。
 6. direct Docker、privileged child、kind Ready、Helm rollout、Service DNS/TCP、child／identity の再作成、default runtime を別の補助検査として実行し、workload／PVC／RuntimeClass の保持を確認します。
 7. idle probe だけが残ること、private FIFO／actor／helper の回収を独立して確認し、所有 namespace と、承認があれば正確な一時 image だけを削除します。namespace cleanup は別記録とし、無関係な resource を prune しません。PASS／FAIL／UNRUN、前提、制約を私的識別子なしで公開します。
