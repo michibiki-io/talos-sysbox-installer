@@ -78,7 +78,7 @@ Only uniquely named/labeled task containers are stopped/removed. The launcher de
 
 Failed runs retain a unique `<output>.partial-*` directory with `FAILED.txt`, logs and any loop journal; no success directory/record is produced. Keep that directory until owned-loop reconciliation succeeds. Diagnose `generator.log`, `conversion.log` and `loop.json`; do not delete backing scratch while it may still be attached. Never detach another task's device. Successful runs retain their partial-named working directory as local evidence (without `FAILED.txt`); only the four files in the success output directory are distribution assets. Remove only this task's retained scratch after confirming its journal and container cleanup.
 
-The existing Standard/probe corresponding-source collection retains its fixed Ubuntu snapshot. If snapshot source-file retrieval exhausts its retries with HTTP 503, `build/ubuntu_sources.py` obtains the expected file names, sizes and SHA256/SHA512 values from apt's already authenticated snapshot Sources indexes. It may fetch only those exact bytes from the official `archive.ubuntu.com` pool, validates the index's strong hash and also records SHA256, then reruns the original apt command to revalidate the complete source set. No package version or index changes; signature/hash/authentication errors and unavailable indexes fail closed. Used fallback URLs and hashes are recorded in Standard build metadata (`ubuntu_source_fallbacks`) or the probe's `ubuntu-source-fallbacks.json`, and all source files remain in the source offering.
+The existing Standard/probe corresponding-source collection retains its fixed Ubuntu snapshot. If snapshot source-file retrieval exhausts its retries with HTTP 503, `build/ubuntu_sources.py` obtains the expected file names, sizes and SHA256/SHA512 values from apt's already authenticated snapshot Sources indexes. It fetches those exact bytes from the official `archive.ubuntu.com` pool; only a pool HTTP 404 permits the exact package/version publication in Ubuntu Launchpad (including its librarian redirect). It validates the index's strong hash and also records SHA256, then reruns the original apt command to revalidate the complete source set. No package version or index changes; signature/hash/authentication errors and unavailable indexes fail closed. Used fallback URLs and hashes are recorded in Standard build metadata (`ubuntu_source_fallbacks`) or the probe's `ubuntu-source-fallbacks.json`, and all source files remain in the source offering.
 
 ### Download and release records
 
@@ -210,7 +210,8 @@ detach 前に backing の device/inode を再確認します。
 
 既存 Standard/probe の対応ソース収集では、固定した Ubuntu snapshot を維持します。
 ソースファイルの取得が HTTP 503 で再試行を尽くした場合だけ、`build/ubuntu_sources.py` が apt の認証済み snapshot Sources 索引からファイル名、サイズ、SHA256/SHA512 を取得します。
-公式 `archive.ubuntu.com` の pool から索引の強い hash に完全一致する内容だけを取得し、SHA256 も計算して記録した後、元の apt コマンドでソース一式を再検証します。
+公式 `archive.ubuntu.com` の pool から取得し、pool が HTTP 404 の場合だけ Ubuntu Launchpad の同一パッケージ・同一版の公開記録（librarian への転送を含む）を使用します。
+索引の強い hash とサイズに完全一致する内容だけを受け付け、SHA256 も計算して記録した後、元の apt コマンドでソース一式を再検証します。
 パッケージ版と索引は変更せず、署名、hash、認証のエラーや索引自体の取得失敗は停止します。
 使用した代替 URL と hash は、Standard の `ubuntu_source_fallbacks` または probe の `ubuntu-source-fallbacks.json` に記録し、対応ソースは従来どおり併配します。
 

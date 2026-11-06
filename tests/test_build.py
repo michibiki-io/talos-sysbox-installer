@@ -223,6 +223,7 @@ class ProbePackageTests(unittest.TestCase):
                     (kwargs['cwd']/'audit.dsc').write_bytes(b'partial source')
                     if failure: raise subprocess.CalledProcessError(100, args)
                     (kwargs['cwd']/'example.dsc').write_bytes(b'remaining source')
+                    return subprocess.CompletedProcess(args,0,'','')
                 fallback_records = [{'file':'audit.dsc','url':'https://archive.ubuntu.com/ubuntu/pool/main/a/audit/audit.dsc',
                                      'bytes':len(b'partial source'),'sha256':hashlib.sha256(b'partial source').hexdigest()}]
                 def source_download(specs,destination,snapshot,only_source=False):

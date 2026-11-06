@@ -7,6 +7,7 @@ import shlex
 import ssl
 import subprocess
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -24,15 +25,16 @@ def archive_inputs(text, snapshot):
         uri,name,size,checksum = fields
         url = urllib.parse.urlsplit(uri)
         kind,_,digest = checksum.partition(':')
+        if not ((kind == 'SHA256' and re.fullmatch(r'[0-9a-f]{64}',digest)) or
+                (kind == 'SHA512' and re.fullmatch(r'[0-9a-f]{128}',digest))):
+            raise ValueError('unsupported signed source hash type or value: '+kind)
         if (url.scheme not in ('http','https') or url.netloc != 'snapshot.ubuntu.com' or
             not url.path.startswith(prefix) or url.query or url.fragment or
             Path(name).name != name or name in ('.','..') or
             urllib.parse.unquote(url.path.rsplit('/',1)[-1]) != name or
             any(p in ('.','..') for p in urllib.parse.unquote(url.path).split('/')) or
-            not ((kind == 'SHA256' and re.fullmatch(r'[0-9a-f]{64}',digest)) or
-                 (kind == 'SHA512' and re.fullmatch(r'[0-9a-f]{128}',digest))) or
             not size.isdigit() or int(size) <= 0):
-            raise ValueError('source URI is not bound to signed snapshot strong hash/size (hash type '+kind+')')
+            raise ValueError('invalid signed snapshot source URI, filename or size')
         record = {'snapshot_uri':uri,'url':'https://archive.ubuntu.com/ubuntu/pool/'+url.path[len(prefix):],
                   'file':name,'bytes':int(size),kind.lower():digest}
         if name in records and records[name] != record:
@@ -43,7 +45,7 @@ def archive_inputs(text, snapshot):
     return list(records.values())
 
 
-def download_exact(record, directory):
+def download_exact(record, directory, specs=()):
     target = directory/record['file']
     algorithm = 'sha512' if 'sha512' in record else 'sha256'
     if target.exists():
@@ -56,7 +58,27 @@ def download_exact(record, directory):
         try:
             h = hashlib.new(algorithm); sha256 = hashlib.sha256(); total = 0
             context = ssl.create_default_context(cafile='/etc/ssl/certs/ca-certificates.crt')
-            with urllib.request.urlopen(record['url'],timeout=120,context=context) as response:
+            try:
+                response = urllib.request.urlopen(record['url'],timeout=120,context=context)
+            except urllib.error.HTTPError as error:
+                if error.code != 404:
+                    raise
+                # Superseded source files leave the pool, but Launchpad retains
+                # the exact source publication. The signed snapshot hash/size
+                # remains authoritative, including for redirected librarian bytes.
+                matches = [spec.split('=',1) for spec in specs if '=' in spec and
+                           record['file'].startswith(spec.split('=',1)[0]+'_')]
+                if len(matches) != 1:
+                    raise ValueError('source publication cannot be bound to one exact package version') from error
+                package,version = matches[0]
+                if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*',package) or not version:
+                    raise ValueError('invalid exact source publication') from error
+                publication = 'https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/'+urllib.parse.quote(package,safe='')+'/'+urllib.parse.quote(version,safe='')+'/'+urllib.parse.quote(record['file'],safe='')
+                response = urllib.request.urlopen(publication,timeout=120,context=context)
+                record['archive_url'] = record['url']
+                record['publication_url'] = publication
+                record['url'] = response.geturl()
+            with response:
                 while True:
                     chunk = response.read(min(1024*1024,record['bytes']-total+1))
                     if not chunk:
@@ -80,13 +102,12 @@ def download(specs, directory, snapshot, only_source=False):
                '--download-only',*specs]
     try:
         result = subprocess.run(command,cwd=directory,check=True,capture_output=True,text=True)
-        for log in (getattr(result,'stdout',''),getattr(result,'stderr','')):
-            if isinstance(log,str):
-                print(log,end='')
+        print(result.stdout,end='',flush=True)
+        print(result.stderr,end='',flush=True)
         return []
     except subprocess.CalledProcessError as error:
         log = (error.stdout or '')+(error.stderr or '')
-        print(log,end='')
+        print(log,end='',flush=True)
         # Never turn auth, signature, checksum or unknown failures into fallback.
         if ('503  Service Unavailable' not in log and '503 Service Unavailable' not in log) or any(
             text in log.lower() for text in ('hash sum mismatch','signature','unauthorized','forbidden')):
@@ -95,8 +116,8 @@ def download(specs, directory, snapshot, only_source=False):
     text = subprocess.check_output(['apt-get','--print-uris','source','--only-source','--download-only',*specs],
                                    cwd=directory,text=True)
     records = archive_inputs(text,snapshot)
-    print(text,end='')  # Retain the real, validated apt URI/hash records.
-    used = [r for r in records if download_exact(r,directory)]
+    print(text,end='',flush=True)  # Retain real, validated apt URI/hash records.
+    used = [r for r in records if download_exact(r,directory,specs)]
     # Let apt revalidate the complete original source set; no package/version,
     # index, checksum or source-offering rule has changed.
     subprocess.run(command,cwd=directory,check=True)
