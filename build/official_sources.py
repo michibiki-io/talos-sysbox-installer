@@ -63,14 +63,14 @@ def retain_notices(archive, destination):
 
 def collect(lock, source_root, licenses, manifest_path):
     manifest=json.loads(manifest_path.read_text())
-    if manifest['talos']!=lock['talos'] or manifest['base_installer']!=lock['base_installer'] or manifest['extensions']!=lock['extensions']:
+    if manifest['talos']!=lock['talos'] or manifest.get('base_installers', {'amd64': manifest['base_installer']}).get(lock['architecture'])!=lock['base_installer'] or manifest['extensions']!=lock['extensions']:
         raise RuntimeError('Official source inventory must match the selected image lock')
     root=source_root/'official';root.mkdir()
     for name,spec in manifest['frameworks'].items():
         print('Retaining official build recipes: '+name,flush=True)
         archive=root/'recipes'/(name+'.tar.gz');download(spec,archive)
         retain_notices(archive,licenses/'official'/name)
-    sbom=root/'talos-amd64.spdx.json';download(manifest['sbom'],sbom)
+    sbom=root/('talos-'+lock['architecture']+'.spdx.json');download(manifest.get('sboms', {'amd64': manifest['sbom']})[lock['architecture']],sbom)
     # Version/license inventory belongs to the image, not the current upstream branch.
     packages=json.loads(sbom.read_text())['packages']
     native=[]
@@ -111,7 +111,7 @@ def collect(lock, source_root, licenses, manifest_path):
                 target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(original.read_bytes())
             retain_notices(Path(result['Zip']),licenses/'official/go-modules')
             records.append({k:result[k] for k in ('Path','Version','Sum','GoModSum')})
-    inventory={'image_inputs':{'base_installer':manifest['base_installer'],'extensions':manifest['extensions']},'frameworks':manifest['frameworks'],'native_sources':native,'go_modules':records,'local_modules':local_modules,'sbom_packages':packages,'source_provision':'All listed archives, module sources, upstream build recipes, configuration and patches are in sources.tar.gz of the same release. VMware-only agent sources are included in this common source bundle.'}
+    inventory={'image_inputs':{'architecture':lock['architecture'],'base_installer':lock['base_installer'],'extensions':manifest['extensions']},'frameworks':manifest['frameworks'],'native_sources':native,'go_modules':records,'local_modules':local_modules,'sbom_packages':packages,'source_provision':'All listed archives, module sources, upstream build recipes, configuration and patches are in sources.tar.gz of the same release. VMware-only agent sources are included in this common source bundle.'}
     (root/'inventory.json').write_text(stable_json(inventory))
     (licenses/'official-inventory.json').write_text(stable_json(inventory))
     return inventory

@@ -21,6 +21,8 @@ import time
 BASE = Path('/opt/proc-transfer')
 CONTRACT = 'proc-sysfs-transfer-v1-thread-pidfd'
 BUILD_PROFILE = 'proc-sysfs-fuse-v1'
+ELF_MACHINES = {'amd64': 62, 'arm64': 183}
+HOST_ARCHITECTURES = {'x86_64': 'amd64', 'aarch64': 'arm64'}
 PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
 VALIDATION_BINARIES = ('ctr', 'helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint', 'checkpoint-sysfs', 'thread-sysfs', 'sysfs-failure-helper')
 REQUIRED_ARTIFACTS = {'launcher.py', 'runtime_exec.py', 'probe_idle.py', 'ctr',
@@ -79,7 +81,7 @@ def verify_exec_cleanup(container, outer):
 def verify_artifacts(base):
     lock = json.loads((base / 'artifacts.lock.json').read_text())
     if (type(lock['schema_version']) is not int or lock['schema_version'] != 1 or
-            lock['architecture'] != 'amd64' or lock.get('contract') != CONTRACT or
+            lock['architecture'] not in ELF_MACHINES or lock.get('contract') != CONTRACT or
             lock.get('launcher_python_minimum') != '3.12' or lock.get('build_profile') != BUILD_PROFILE or
             not re.fullmatch('[0-9a-f]{40}', lock.get('revision', '')) or
             not re.fullmatch('[0-9a-f]{64}', lock.get('source_lock_sha256', '')) or
@@ -92,8 +94,8 @@ def verify_artifacts(base):
             raise ValueError('validation artifact hash mismatch')
     for name in VALIDATION_BINARIES:
         header = (base / name).read_bytes()[:20]
-        if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != 62:
-            raise ValueError('validation executable ABI must be amd64 ELF')
+        if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != ELF_MACHINES[lock['architecture']]:
+            raise ValueError('validation executable ABI must be ' + lock['architecture'] + ' ELF')
     return lock
 
 
@@ -136,14 +138,17 @@ def trusted_host_namespaces(proc_root=Path('/proc')):
 
 
 def run(args):
-    if sys.version_info < (3, 12) or os.geteuid() != 0 or os.uname().machine != 'x86_64':
-        raise ValueError('requires trusted amd64 root and Python >=3.12')
+    architecture = HOST_ARCHITECTURES.get(os.uname().machine)
+    if sys.version_info < (3, 12) or os.geteuid() != 0 or architecture is None:
+        raise ValueError('requires trusted amd64/arm64 root and Python >=3.12')
     host = trusted_host_namespaces()
     artifacts = verify_artifacts(BASE)
     image_lock = json.loads(args.image_lock.read_text())
     if digest(BASE / 'artifacts.lock.json') != image_lock['validation_artifacts_lock_sha256']:
         raise ValueError('validation artifact inventory is not anchored by image lock')
     probe_image = image_lock['test_images']['proc_transfer_probe']
+    if artifacts['architecture'] != architecture or probe_image['architecture'] != architecture:
+        raise ValueError('probe artifacts must match the trusted host architecture')
     image_versions = (BASE / 'image-versions.json').read_bytes()
     if (image_lock['schema_version'] != 1 or image_lock.get('build_profile') != BUILD_PROFILE or
             image_lock['source_lock_sha256'] != artifacts['source_lock_sha256'] or
@@ -213,7 +218,7 @@ def run(args):
             raise ValueError('probe credentials or production seccomp missing')
         if probe_processes(args.container) != {outer}:
             raise ValueError('dedicated probe contains unexpected processes before verification')
-        result = {'architecture': 'amd64', 'kernel': os.uname().release,
+        result = {'architecture': architecture, 'kernel': os.uname().release,
                   'revision': artifacts['revision'], 'runtime_binary_sha256': metadata['proc_transfer']['output_sha256'],
                   'build_profile': BUILD_PROFILE, 'validation_image_oci_digest': probe_image['oci_digest'],
                   'unrun': {'failure_helper_injection': 'Requires separately approved disposable daemon; installed consumer is never reconfigured',

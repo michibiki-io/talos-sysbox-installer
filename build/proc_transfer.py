@@ -11,6 +11,20 @@ from pathlib import Path
 REPOSITORY = 'https://github.com/michibiki-io/sysbox-proc-transfer'
 CONTRACT = 'proc-sysfs-transfer-v1-thread-pidfd'
 BUILD_PROFILE = 'proc-sysfs-fuse-v1'
+ELF_MACHINES = {'amd64': 62, 'arm64': 183}
+
+
+def architecture(value):
+    if value not in ELF_MACHINES:
+        raise ValueError('unsupported architecture: ' + str(value))
+    return value
+
+
+def verify_elf(header, target):
+    machine = ELF_MACHINES[architecture(target)]
+    if header[:6] != b'\x7fELF\x02\x01' or int.from_bytes(header[18:20], 'little') != machine:
+        raise ValueError('executable ABI must be ' + target + ' ELF')
+
 PRODUCTION_BINARIES = ('sysbox-fs', 'proc-mount-helper', 'sysfs-mount-helper')
 VALIDATION_ONLY = ('helper-checkpoint', 'checkpoint-requester', 'sysfs-checkpoint',
                    'checkpoint-sysfs', 'sysfs-failure-helper', 'thread-sysfs',
@@ -223,7 +237,7 @@ def apply_patch(root, integration):
         subprocess.run(args, cwd=root, check=True)
 
 
-def verify_pair(local, binaries):
+def verify_pair(local, binaries, target='amd64'):
     """Validate the actual backend payload, ownership and static matched ELFs."""
     root = local / 'lib/containers/sysbox-fs'
     for name in PRODUCTION_BINARIES:
@@ -234,8 +248,7 @@ def verify_pair(local, binaries):
         if stat.st_uid != 0 or stat.st_gid != 0 or stat.st_mode & 0o777 != 0o755:
             raise ValueError('production triple must be root-owned mode 0755')
         header = path.read_bytes()[:20]
-        if header[:4] != b'\x7fELF' or header[4:6] != bytes([2, 1]) or int.from_bytes(header[18:20], 'little') != 62:
-            raise ValueError('production triple must be amd64 ELF')
+        verify_elf(header, target)
         program = subprocess.check_output(['readelf', '-l', str(path)], text=True)
         dynamic = subprocess.check_output(['readelf', '-d', str(path)], text=True)
         if 'INTERP' in program or '(NEEDED)' in dynamic:
@@ -263,6 +276,10 @@ def verify_extension_archive(archive, metadata):
     links = {}
     with tarfile.open(archive) as outer:
         entry, = json.load(outer.extractfile('manifest.json'))
+        target = architecture(metadata.get('inputs', {}).get('architecture', 'amd64'))
+        config = json.load(outer.extractfile(entry['Config']))
+        if config.get('architecture') != target or config.get('os') != 'linux':
+            raise ValueError('extension image architecture differs from build inputs')
         for layer in entry['Layers']:
             with tarfile.open(fileobj=outer.extractfile(layer)) as tf:
                 for member in tf:

@@ -39,15 +39,12 @@ jobs:
         run: python3 scripts/release/resolve_merged_pr.py
 
   publish:
-    name: Publish release
+    name: Serialized native release
     needs: prepare
-    runs-on: ${{ vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
     if: >-
       ${{ always()
       && needs.prepare.result == 'success'
       && needs.prepare.outputs.eligible == 'true' }}
-    env:
-      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
     concurrency:
       group: release-${{ github.repository }}-${{ github.event.repository.default_branch }}
       cancel-in-progress: false
@@ -55,129 +52,11 @@ jobs:
       contents: write
       packages: write
       pull-requests: read
-    steps:
-      - name: Check out merge commit
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-
-      - name: Fetch tags
-        run: git fetch --force --tags origin
-
-      - name: Fetch PR head for git fallback
-        continue-on-error: true
-        env:
-          PR_BASE_REF: ${{ needs.prepare.outputs.base_ref }}
-          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
-        run: |
-          git fetch --force origin "refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}" || true
-          git fetch --force origin "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pull/${PR_NUMBER}/head"
-
-      - name: Compute release metadata
-        id: compute
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_COMMIT_SHA: ${{ github.sha }}
-          PR_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
-          PR_HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
-          PR_COMMIT_COUNT: ${{ needs.prepare.outputs.commit_count }}
-          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
-        run: python3 scripts/release/compute_release.py
-
-      - name: Skip when no release is required
-        if: steps.compute.outputs.release_required != 'true'
-        run: echo "No releasable commit messages were found for this merged pull request."
-      - name: Create annotated git tag
-        if: steps.compute.outputs.release_required == 'true' && steps.compute.outputs.tag_exists != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.compute.outputs.git_tag }}" -m "Release ${{ steps.compute.outputs.git_tag }}"
-          git push origin "${{ steps.compute.outputs.git_tag }}"
-
-      - name: Reuse original release inputs on rerun
-        id: original
-        if: steps.compute.outputs.release_required == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/release/reuse_inputs.py --tag '${{ steps.compute.outputs.git_tag }}'
-      - uses: docker/setup-buildx-action@v4
-        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
-        id: builder
-      - name: Build extension and both installers
-        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
-        env:
-          PROJECT_VERSION: ${{ steps.compute.outputs.docker_tag }}
-        run: python3 scripts/build.py --version "$PROJECT_VERSION" --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" --with-probe
-      - name: Registry login
-        if: steps.compute.outputs.release_required == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Check publication prerequisites before staging
-        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.completed != 'true'
-        run: python3 scripts/publish.py --preflight-only --images .build/images.json --output .build/preflight-images.json
-      - name: Retain original archives and corresponding sources
-        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.reuse != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/release/stage_release.py --tag '${{ steps.compute.outputs.git_tag }}' --preflight .build/preflight-images.json
-      - name: Make matching sources public before every binary push
-        if: steps.compute.outputs.release_required == 'true' && steps.original.outputs.completed != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit '${{ steps.compute.outputs.git_tag }}' --draft=false
-      - name: Publish and require anonymous pull
-        if: steps.compute.outputs.release_required == 'true'
-        run: |
-          if [ '${{ steps.original.outputs.completed }}' = true ]; then
-            python3 scripts/publish.py --verify-existing --images .build/images.json --output .build/verified-images.json
-            python3 - <<'PY'
-          import json, pathlib
-          previous=pathlib.Path('.build/release-images.json')
-          verified=json.load(open('.build/verified-images.json'))
-          if previous.exists() and json.loads(previous.read_text())['images'] != verified['images']: raise SystemExit('Published release digest changed; refusing rerun')
-          previous.write_text(json.dumps(verified,indent=2)+'\n')
-          PY
-          else
-            python3 scripts/publish.py --images .build/images.json --output .build/release-images.json
-          fi
-          cp .build/release-images.json .build/approved-runtime-images.json
-          python3 - <<'PY'
-          import json, pathlib
-          result=json.load(open('.build/release-images.json'))
-          pathlib.Path('.build/test-images.lock.json').unlink(missing_ok=True)
-          if 'test_image_lock' in result:
-              pathlib.Path('.build/test-images.lock.json').write_text(json.dumps(result['test_image_lock'],indent=2)+'\n')
-          PY
-      - name: Generate release notes
-        if: steps.compute.outputs.release_required == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          mkdir -p .github/tmp &&
-          python3 scripts/release/generate_release_notes.py
-          --repo "${GITHUB_REPOSITORY}"
-          --previous-tag "${{ steps.compute.outputs.previous_tag }}"
-          --target "${{ github.sha }}"
-          --pr-number "${{ needs.prepare.outputs.pr_number }}"
-          --output .github/tmp/release-notes.md
-
-      - name: Create or update GitHub Release
-        if: steps.compute.outputs.release_required == 'true'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.compute.outputs.git_tag }}
-          target_commitish: ${{ github.sha }}
-          body_path: .github/tmp/release-notes.md
-          draft: false
-          prerelease: false
-          generate_release_notes: false
-          files: |
-            .build/release-images.json
-            .build/approved-runtime-images.json
-            .build/test-images.lock.json
+    uses: ./.github/workflows/release-native.yml
+    secrets: inherit
+    with:
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+      base_ref: ${{ needs.prepare.outputs.base_ref }}
+      base_sha: ${{ needs.prepare.outputs.base_sha }}
+      head_sha: ${{ needs.prepare.outputs.head_sha }}
+      commit_count: ${{ needs.prepare.outputs.commit_count }}

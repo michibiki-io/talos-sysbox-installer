@@ -2,6 +2,11 @@ name: Test
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_runtime:
+        description: Run privileged Talos-in-Docker checks explicitly
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -9,11 +14,24 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.ACTIONS_RUNNER || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04-arm' || vars.ACTIONS_RUNNER_ARM64 || 'ubuntu-24.04-arm') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || vars.ACTIONS_RUNNER || 'ubuntu-latest') }}
     # Allow extra corresponding-source collection time for fixed-snapshot latency.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
+      - name: Require native target runner
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PYCODE'
+          import os, platform
+          actual = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine())
+          if actual != os.environ['TARGET_ARCH']: raise SystemExit('Native target runner required')
+          PYCODE
       - name: Install locked validation clients
         run: python3 scripts/install_test_tools.py
       - name: Unit checks
@@ -24,17 +42,20 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os
-          lock=json.load(open('versions.lock.json'))
+          lock=json.load(open('versions.arm64.lock.json' if '${{ matrix.arch }}' == 'arm64' else 'versions.lock.json'))
           with open(os.environ['GITHUB_ENV'],'a') as f:
             f.write('GO_IMAGE='+lock['go']+'\nUBUNTU_IMAGE='+lock['ubuntu']+'\nAPT_SNAPSHOT='+lock['apt_snapshot']+'\nCATALOGUE_IMAGE='+lock['catalogue']+'\n')
           PY
-      - name: Cached amd64 build
+      - name: Stage selected lock for cached Docker build
+        if: matrix.arch == 'arm64'
+        run: cp versions.arm64.lock.json versions.lock.json
+      - name: Cached native build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: build/Dockerfile
           target: evidence
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           push: false
           outputs: type=local,dest=.build/evidence
           build-args: |
@@ -42,10 +63,13 @@ jobs:
             UBUNTU_IMAGE=${{ env.UBUNTU_IMAGE }}
             APT_SNAPSHOT=${{ env.APT_SNAPSHOT }}
             CATALOGUE_IMAGE=${{ env.CATALOGUE_IMAGE }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Restore default lock after cached build
+        if: always() && matrix.arch == 'arm64'
+        run: git restore -- versions.lock.json
       - name: Build both installers and probe (no publication)
-        run: python3 scripts/build.py --builder '${{ steps.builder.outputs.name }}' --with-probe
+        run: python3 scripts/build.py --builder '${{ steps.builder.outputs.name }}' --arch '${{ matrix.arch }}' --output .build --with-probe
       - name: Validate complete release assets offline
         run: |
           python3 - <<'PY'
@@ -65,14 +89,15 @@ jobs:
           (directory / 'release-asset-sizes.json').write_text(json.dumps(proof, indent=2) + '\n')
           PY
       - name: Supporting Talos-in-Docker runtime checks
+        if: github.event_name == 'workflow_dispatch' && inputs.run_runtime == true
         run: |
           sudo modprobe br_netfilter
-          python3 test/e2e/scripts/talos_docker.py --rootfs .build/evidence/rootfs --subnet 10.77.0.0/24
+          python3 test/e2e/scripts/talos_docker.py --lock "${{ matrix.arch == 'arm64' && 'versions.arm64.lock.json' || 'versions.lock.json' }}" --rootfs .build/evidence/rootfs --subnet 10.77.0.0/24
       - name: Upload sanitized evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: build-and-validation-evidence
+          name: build-and-validation-evidence-${{ matrix.arch }}
           include-hidden-files: true
           path: |
             .build/validation/test-images.lock.json

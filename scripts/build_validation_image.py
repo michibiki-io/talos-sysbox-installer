@@ -74,17 +74,22 @@ def main():
     p.add_argument('--builder', required=True)
     p.add_argument('--image', help='Optional immutable release tag; build/export only')
     p.add_argument('--production-metadata', type=Path)
-    p.add_argument('--lock', type=Path, default=ROOT / 'versions.lock.json')
+    p.add_argument('--lock', type=Path)
+    p.add_argument('--arch', choices=tuple(proc_transfer.ELF_MACHINES))
     p.add_argument('--network', choices=('default', 'host'), default='default')
     a = p.parse_args()
     out = a.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     (out / 'test-images.lock.json').unlink(missing_ok=True)
-    lock = json.loads(a.lock.read_text())
+    a.lock, lock = build.select_lock(a.lock, a.arch)
+    arch = lock['architecture']
     source = proc_transfer.load_lock(ROOT / 'build/proc-transfer.lock.json')
     image = 'docker.io/talos-sysbox-local/proc-transfer-probe:' + source['revision'][:12] + '-proc-sysfs-fuse-v1'
+    if arch != 'amd64':
+        image += '-' + arch
     if a.image:
-        if not re.fullmatch(r'ghcr.io/[a-z0-9_.-]+/talos-sysbox-proc-transfer-probe:v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+', a.image):
+        suffix = '' if arch == 'amd64' else '-' + arch
+        if not re.fullmatch(r'ghcr.io/[a-z0-9_.-]+/talos-sysbox-proc-transfer-probe:v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+' + suffix, a.image):
             p.error('invalid immutable probe release tag')
         image = a.image
     with tempfile.TemporaryDirectory(prefix='validation-context-') as work:
@@ -96,7 +101,7 @@ def main():
             shutil.copy2(ROOT / 'scripts' / name, context / 'scripts' / name)
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')
-        args = ['docker', 'buildx', 'build', '--builder', a.builder, '--platform', 'linux/amd64', '--network', a.network,
+        args = ['docker', 'buildx', 'build', '--builder', a.builder, '--platform', 'linux/'+arch, '--network', a.network,
                 '-f', str(context / 'build/Dockerfile')]
         for name, value in {'GO_IMAGE': lock['go'], 'UBUNTU_IMAGE': lock['ubuntu'], 'APT_SNAPSHOT': lock['apt_snapshot'], 'CATALOGUE_IMAGE': lock['catalogue']}.items():
             args += ['--build-arg', name + '=' + value]
@@ -125,6 +130,7 @@ def main():
         raise RuntimeError('probe image must default to UID/GID 1001')
     archive = out / 'probe-image.tar'
     build.run(['docker', 'save', '-o', str(archive), image])
+    build.archive_platform(archive, arch)
     layer_verification = verify_flattened_archive(archive)
     with tempfile.TemporaryDirectory(prefix='probe-oci-', dir=out) as work:
         layout = Path(work) / 'layout'
@@ -140,7 +146,7 @@ def main():
         'archive': 'probe-oci.tar', 'archive_sha256': build.file_sha256(out / 'probe-oci.tar'),
         'docker_archive': archive.name, 'docker_archive_sha256': build.file_sha256(archive), 'anonymous_pull_verified': False,
         **layer_verification,
-        'distribution': 'local-archive-import-only', 'architecture': 'amd64', 'uid': 1001, 'gid': 1001,
+        'distribution': 'local-archive-import-only', 'architecture': arch, 'uid': 1001, 'gid': 1001,
         'bubblewrap': '0.12.0', 'launcher_python_minimum': '3.12'},
         'proc_transfer_bootstrap': lock['test_images']['busybox']},
         'validation_artifacts_lock_sha256': build.file_sha256(out / 'tools/artifacts.lock.json'),

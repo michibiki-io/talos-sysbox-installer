@@ -265,12 +265,15 @@ def build_validation(integration, source_root, env):
             print(result.stdout, result.stderr, flush=True)
             raise RuntimeError('selected upstream regression failed')
     record = {'schema_version': 1, 'revision': integration_record['lock']['revision'],
-              'build_profile': proc_transfer.BUILD_PROFILE, 'architecture': 'amd64', 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
+              'build_profile': proc_transfer.BUILD_PROFILE, 'architecture': LOCK['architecture'], 'launcher_python_minimum': '3.12', 'contract': proc_transfer.CONTRACT,
               'source_lock_sha256': proc_transfer.sha256(Path('/work/project/build/proc-transfer.lock.json')),
               'artifact_sha256': proc_transfer.inventory(validation)}
     (validation / 'artifacts.lock.json').write_text(stable_json(record))
 
 def main():
+    proc_transfer.architecture(LOCK['architecture'])
+    if run(['dpkg', '--print-architecture']) != LOCK['architecture']:
+        raise ValueError('builder architecture differs from selected lock')
     verify_catalogue(LOCK, Path('/work/catalogue-image-digests').read_text())
     LIC.mkdir(parents=True)
     shutil.copy2('/work/LICENSE', LIC / 'MIT')
@@ -327,7 +330,11 @@ def main():
         for name in programs:
             helper(shutil.which(name), root, '/bin/' + name)
         if daemon == 'sysbox-mgr':
-            for path in Path('/usr/lib/x86_64-linux-gnu/xtables').glob('*.so'):
+            xtables = Path('/usr/lib') / run(['dpkg-architecture', '-qDEB_HOST_MULTIARCH']) / 'xtables'
+            plugins = sorted(xtables.glob('*.so'))
+            if not plugins:
+                raise RuntimeError('missing target xtables plugins')
+            for path in plugins:
                 helper(path, root)
         mounts = ''.join(f'    - source: {p}\n      destination: {p}\n      type: bind\n      options: [rbind, rshared, rw]\n' for p in ('/run', '/var', '/system/run'))
         # Socket readiness is checked inside the supervisor with a deadline;
@@ -369,7 +376,7 @@ logToConsole: false
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
     integration_record['output_sha256'] = {name: binaries[name] for name in proc_transfer.PRODUCTION_BINARIES}
-    proc_transfer.verify_pair(LOCAL, binaries)
+    proc_transfer.verify_pair(LOCAL, binaries, LOCK['architecture'])
     report = {'proc_transfer': integration_record, 'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'Standalone runc/mgr unpatched; fs patched with proc/sysfs/FUSE and matched static helpers. All runtime binaries and both helpers rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
     OUT.joinpath('build-metadata.json').write_text(stable_json(report))
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
