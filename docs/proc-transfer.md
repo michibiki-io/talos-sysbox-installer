@@ -74,9 +74,9 @@ For CI and approved local validation, `scripts/build_validation_image.py` export
 
 Real Talos operations require separate approval naming the concrete node, generated probe image and temporary namespace/privileged launcher operations. The target must already have this build installed and `sysbox-runc` registered. Run the existing supporting Docker/kind/Helm/Service/default-runtime validation separately; the proc runner does not replace it.
 
-The trusted launcher requires native amd64 or ARM64 matching its probe and artifact locks, Python **>=3.12**, initial User namespace root, node PID namespace/proc access, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` (pidfd_getfd), `CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_CHROOT`, and access to CRI and system-containerd sockets. It uses the image's fixed ctr/nsenter/Python and checkpoint helper. An authorized privileged hostPID Pod on the exact node supplies that context; the actual probe remains a nonprivileged UID/GID 1001 Sysbox Pod with the production filter. Namespace identities are captured independently from `/proc/1/ns/{pid,user}` in the trusted launcher, never inferred inside the probe.
+The trusted launcher requires native amd64 or ARM64 matching its probe and artifact locks, Python **>=3.12**, initial User namespace root, CRI PID namespace/proc access, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` (pidfd_getfd), `CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_CHROOT`, and access to the CRI socket. It uses the image's fixed ctr/nsenter/Python and checkpoint helper. An authorized privileged hostPID Pod on the exact node supplies that context; the actual probe remains a nonprivileged UID/GID 1001 Sysbox Pod with the production filter. Namespace identities are captured independently from `/proc/1/ns/{pid,user}` in the trusted launcher, never inferred inside the probe.
 
-The launcher mounts only `/usr/local` and `/run/containerd` from the host, both read-only. Talos system-containerd is reached at `/proc/1/root/system/run/containerd/containerd.sock` only after the independent namespace and initial UID-map checks. `/system/run/containerd` is absent from the kubelet root view; neither that path nor a proc-root magic-link replacement is a hostPath bind source. CRI stays at `/run/containerd/containerd.sock`. No host filesystem changes are required.
+The launcher mounts only `/usr/local` and `/run/containerd` from the host, both read-only. It uses `/run/containerd/containerd.sock` for both the probe and owned backends. With Talos 1.14.5 workload isolation enabled, hostPID joins the CRI PID namespace rather than the initial host PID namespace. After checking the initial UID map, the launcher verifies the socket's kernel SO_PEERCRED root UID/GID, pins its live peer with pidfd and requires matching PID/User namespaces. Sysbox mgr/fs and runc must share that CRI PID context. No system-containerd socket or host filesystem change is required. An [independent socket-peer spike](test-evidence/issue-19-cri-peer-spike.json) confirmed root credentials and matching PID/User namespaces on the retained experimental VM; it did not exercise the final Python launcher or pidfd lifecycle cases.
 
 For the public route, obtain the completed release's `test-images.lock.json` asset, render it with the same operator command, and create only the namespace, probe and launcher manifests. The renderer uses the exact `image@sha256` reference and `IfNotPresent`; no bootstrap/import is needed. After readiness, transfer that public lock to the launcher and run the same verification/result commands below. If publication or anonymous checks have not succeeded, there is no public lock to use.
 
@@ -127,15 +127,15 @@ kubectl --kubeconfig CONFIG --context CONTEXT -n OWNED_NAMESPACE exec proc-trans
 kubectl --kubeconfig CONFIG --context CONTEXT delete namespace OWNED_NAMESPACE --wait=true --timeout=120s
 ```
 
-The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter/unshare (util-linux)/ip (iproute2) hashes, every validation artifact hash and the installed triple/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/node PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
+The launcher refuses unrelated processes, pins the owned probe by pidfd, derives its mapped UID/GID for credential verification, validates the imported OCI digest, actual probe image and bwrap/Python/compiler/nsenter/unshare (util-linux)/ip (iproute2) hashes, every validation artifact hash and the installed triple/hash/ownership, and checks `/proc/BACKEND/exe` against the downstream fs hash, the running backend's helper environment/path/ownership, and its initial User/CRI PID namespaces. Containerd's selected image reference (including its CRI config-ID alias) must resolve to the locked manifest digest. The idle-probe token prevents accidental use against another workload. Production binary hashes must match the downstream build embedded in this particular validation image.
 
-Each exec allocates one private mode-0700 directory below the launcher Pod's `/tmp`, ignoring `TMPDIR`. The fixed ctr receives `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY` (the absolute path appended after `root`); hostPID and the live wrapper process let both client and host daemon/shim resolve the same FIFO inodes. A Pod-only `/tmp` spelling is insufficient for the daemon. The wrapper verifies directory identity/mode, keeps it alive through the exec deadline (1–600 seconds) and, on exceptions/cancellation, through the bounded 15-second deletion attempt for only its unique exec ID, then removes it. Cleanup failures remain failures requiring owned-namespace cleanup. Host containerd mounts remain read-only.
+Each exec allocates one private mode-0700 directory below the launcher Pod's `/tmp`, ignoring `TMPDIR`. The fixed ctr receives `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY` (the absolute path appended after `root`); hostPID and the live wrapper process let both client and CRI daemon/shim resolve the same FIFO inodes. A Pod-only `/tmp` spelling is insufficient for the daemon. The wrapper verifies directory identity/mode, keeps it alive through the exec deadline (1–600 seconds) and, on exceptions/cancellation, through the bounded 15-second deletion attempt for only its unique exec ID, then removes it. Cleanup failures remain failures requiring owned-namespace cleanup. Host containerd mounts remain read-only.
 
 Actual-path execution uses ctr task exec with UID/GID 1001 and retains the runtime filter. It runs the unchanged original bwrap command, PID/User/seccomp checks, registered mask/read-only/detach protections, recursive read-only procfs, existing `/sys` bind, both real nonleader mount cases and 500 concurrent mounts with reaping. The stress exec has a 300-second deadline plus bounded cleanup allowance; interruption force-deletes only its unique server exec ID. Failed/time-limited checks never mark cleanup passed; deletion of the owned namespace remains a separate operator step. Helper arguments remain outer-User-namespace UID/GID 1001; host-mapped IDs are used only for process credential checks. It additionally runs the actual sysfs/FUSE suite described below, all four proc and seven sysfs rejection modes, and each filesystem’s 32 leader/nonleader checkpoint cases. Only these direct-helper fixtures enter via trusted nsenter to create their own listener; they do not alter any service or running process's filter. Each fixture closes descriptors and reaps uniquely identified owned actors. A final independent containerd process inventory must show only the pinned idle probe before cleanup passes; `namespace_cleanup` stays unrun for the separate operator deletion. The result distinguishes actual-path and checkpoint checks. Missing capabilities/APIs, wrong versions/hashes, observer errors and timeouts fail rather than skip. Preserve raw logs privately; publish only sanitized result JSON and record the final namespace cleanup outcome separately. If cache cleanup is approved too, use the bootstrap ctr to remove only this generated `local_tag` after deleting the probe/launcher Pods; never prune the node image store. Then delete the owned namespace (including bootstrap).
 
 ### Evidence boundaries
 
-The targets are amd64 and ARM64 Talos 1.12.6/kernel 6.18.18-talos (ARM64 runtime verification is UNRUN) with Sysbox 0.7.1, standard and VMware installers. Historical v0.3.1 proc/protection/sys-bind and supporting-runtime results are baseline evidence only. Its UID1001 bwrap fresh-sysfs shared/new Network × RW/RO diagnostic failed EPERM. The separate lower-level unshare diagnostic returned EINVAL even for its bind control; it is a different entry path. Neither old artifact nor upstream arm64/PoC results prove this changed build works on actual Talos.
+The targets are amd64 and ARM64 Talos 1.14.5/kernel 6.18.58-talos (ARM64 runtime verification is UNRUN) with Sysbox 0.7.1, standard and VMware installers. Historical v0.3.1 proc/protection/sys-bind and supporting-runtime results are baseline evidence only. Its UID1001 bwrap fresh-sysfs shared/new Network × RW/RO diagnostic failed EPERM. The separate lower-level unshare diagnostic returned EINVAL even for its bind control; it is a different entry path. Neither old artifact nor upstream arm64/PoC results prove this changed build works on actual Talos.
 
 The inherited v0.4.0 official oracle stopped on regular `bonding_masters` after a successful fresh nested mount. Later diagnostic corrections passed ten sysfs subcases, 79 distinct proc/sysfs checks across a full run and four lifecycle replays, and seven supporting runtime checks on amd64 Talos 1.12.6/VMware. Those modified diagnostic fixtures are not packaged here and do not verify changed official artifacts. Even with identical helper/patch inputs, the new revision changes the fs embedded identity and may change output hashes; rebuild and verify the new installer/probe pair.
 
@@ -145,7 +145,7 @@ The current source contract is `proc-sysfs-transfer-v1-thread-pidfd`; build prof
 
 Before merge, focused downstream tests, selected upstream fixed-builder tests, both installer/probe/source exports, offline release-asset checks and latest-head Test CI (static/unit/build checks on native amd64 and ARM64 runners; runtime E2E is recorded separately) must be recorded separately. A compiler/unit-test pass does not establish runtime mount behavior. Failed, conditional-skipped and UNRUN checks remain distinct. Full builds and CI are separate from the focused local edit/test stage. Talos-in-Docker is available only through explicit Test workflow_dispatch with run_runtime=true (default false), never automatically on PRs; record it as UNRUN unless separately executed. ARM64 runtime checks are UNRUN for this implementation. Native builds retain the same embedded kernel/seccomp unit and helper checks on both targets.
 
-Actual Talos, official publication and anonymous pulls of the changed artifacts are **UNRUN**, deferred until human merge, official release and fresh approval naming a concrete target/image/operation. No node upgrade, reboot, cluster mutation, daemon reconfiguration or host policy change is authorized by this implementation. Unavailable disposable fixtures are UNRUN with their prerequisite reason, never silently omitted or treated as passes.
+Official publication and anonymous pulls of changed release artifacts remain **UNRUN** until release. The owner authorized a disposable amd64 sandbox for pre-merge installation, reboot and runtime checks. [The limited spike](test-evidence/issue-19-spike.json) is inherited diagnostic evidence, not validation of this final build. The rebuilt local Standard amd64 installer/probe pair passed the final Python launcher and all 79 proc/sysfs checks: [sanitized result](test-evidence/issue-19-native-proc.json). [Native evidence](test-evidence/issue-19-native.json) records producer source/binary/supervisor hashes, installed-file checks, CRI namespace identity, removal of spike-only settings, fresh supported runtime registration and owned-resource cleanup. This was a configuration reset on an existing sandbox, not a fresh OS installation. After the probe, mgr/fs restarts and Docker/privileged-child/kind/Helm/DNS/default-Pod checks passed. Talos reports no health probe for these extension services (`?`); Running and subsequent runtime success are the evidence, not a claimed health-probe pass. Unavailable disposable fixtures are UNRUN with their prerequisite reason, never silently omitted or treated as passes.
 
 ### Sysfs prerequisites and runtime route
 
@@ -285,15 +285,18 @@ CI では probe に収録した production metadata と両 installer の metadat
 対象には今回の build が導入済みで、`sysbox-runc` が登録済みである必要があります。
 既存の Docker/kind/Helm/Service/default-runtime 検証は別途維持します。
 
-trusted launcher は probe と artifact lock に一致する native amd64 または ARM64、Python 3.12 以降、initial User namespace の root、node PID/proc へのアクセス、`CAP_SYS_ADMIN`、`CAP_SYS_PTRACE`、`CAP_SETUID`、`CAP_SETGID`、`CAP_SYS_CHROOT`、CRI と system-containerd socket を要求します。
+trusted launcher は probe と artifact lock に一致する native amd64 または ARM64、Python 3.12 以降、initial User namespace の root、CRI PID/proc へのアクセス、`CAP_SYS_ADMIN`、`CAP_SYS_PTRACE`、`CAP_SETUID`、`CAP_SETGID`、`CAP_SYS_CHROOT`、CRI socket を要求します。
 承認済み hostPID privileged Pod がこの環境を用意し、実 probe は production filter を保持する UID/GID 1001 の非 privileged Sysbox Pod として動きます。
 ホスト namespace は trusted launcher の `/proc/1/ns/{pid,user}` から独立して取得します。
 
 launcher の host mount は `/usr/local` と `/run/containerd` だけで、どちらも read-only です。
-namespace と initial UID map の独立した確認後にだけ、`/proc/1/root/system/run/containerd/containerd.sock` から system-containerd を参照します。
-`/system/run/containerd` は kubelet の root view に存在しないため、hostPath として指定しません。
-proc-root の magic link を代わりの bind 元にすることもありません。
-CRI は `/run/containerd/containerd.sock` を使い、host filesystem の変更は不要です。
+probe と所有 backend の両方に `/run/containerd/containerd.sock` を使用します。
+Talos 1.14.5 の workload isolation 有効時、hostPID Pod は実ホスト初期 PID namespace ではなく CRI の PID namespace に入ります。
+initial UID map の確認後、socket の kernel SO_PEERCRED による root UID/GID、pidfd で固定した生存 peer、PID/User namespace の一致を検証します。
+Sysbox mgr/fs と runc も、この CRI PID namespace を共有する必要があります。
+system-containerd socket と host filesystem の変更は不要です。
+[独立した socket-peer spike](test-evidence/issue-19-cri-peer-spike.json) では、実験用 VM で root credential と PID/User namespace の一致を確認しました。
+最終 Python launcher と pidfd lifecycle の検査は、この spike の対象外です。
 
 公開経路では、公開完了済み release の `test-images.lock.json` を取得して同じ renderer に渡します。
 namespace、probe、launcher だけを作成し、bootstrap や import は不要です。
@@ -321,11 +324,11 @@ workstation の Docker へ load するだけでは Talos の CRI に入りませ
 英語節に実行 command と結果の取得手順を示します。
 
 launcher は無関係な workload を拒否し、専用 probe を pidfd で固定します。
-UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter/unshare（util-linux）/ip（iproute2）の hash、全検証 artifact の hash、導入した triple の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と node PID namespace を照合します。
+UID/GID map、import 済み OCI digest、実 probe image と bwrap/Python/compiler/nsenter/unshare（util-linux）/ip（iproute2）の hash、全検証 artifact の hash、導入した triple の hash と所有権、実 fs backend の `/proc/BACKEND/exe` hash、helper の環境変数と path と所有権、initial User namespace と CRI PID namespace を照合します。
 CRI の config-ID alias を含む実 container image が、固定 manifest digest を指すことも確認します。
 各 exec は launcher Pod の `/tmp` に mode 0700 の private directory を一つ作り、`TMPDIR` は使いません。
 固定 ctr に `--fifo-dir=/proc/OWN_PYTHON_PID/root/ABSOLUTE_PRIVATE_DIRECTORY`（`root` の後に private directory の絶対 path を続ける）を指定します。
-hostPID と実行中の wrapper process により、client と host daemon/shim が同じ FIFO inode を参照できます。
+hostPID と実行中の wrapper process により、client と CRI daemon/shim が同じ FIFO inode を参照できます。
 Pod 内だけの `/tmp` path では daemon から参照できません。
 wrapper は directory の同一性と mode を照合し、1～600 秒の実行期限まで保持します。
 例外や中断時には固有 exec ID だけを15秒以内の期限で削除を試み、その後に directory を回収します。
@@ -348,7 +351,7 @@ capability/API の不足、版や hash の不一致、observer failure、timeout
 
 ### 検証結果の範囲
 
-対象は amd64／ARM64 Talos 1.12.6/kernel 6.18.18-talos（ARM64 の動作検証は UNRUN）、Sysbox 0.7.1 の standard／VMware installer です。
+対象は amd64／ARM64 Talos 1.14.5/kernel 6.18.58-talos（ARM64 の動作検証は UNRUN）、Sysbox 0.7.1 の standard／VMware installer です。
 過去の v0.3.1 proc／保護／既存 sys bind と補助 runtime の成功は baseline です。
 UID1001 bwrap の新規 sysfs は、共有／新規 Network × RW／RO の4条件で EPERM でした。
 別の直接 unshare 診断は bind 対照も EINVAL となった別経路です。
@@ -376,9 +379,10 @@ Talos-in-Docker は Test の workflow_dispatch で `run_runtime=true`（既定 f
 別途実施しない限り UNRUN と記録し、今回の ARM64 動作検証も UNRUN です。
 native ビルド内の kernel／seccomp ユニット検査と helper 検査は両アーキテクチャで同じ条件を維持します。
 
-変更後の正式成果物による実 Talos、公開、匿名 pull は UNRUN です。
-人間の merge、正式 release、具体的な対象／image／操作の新たな承認後に実施します。
-今回の実装は node upgrade、reboot、cluster 変更、daemon 再設定、host policy 変更を許可しません。
+変更後の正式 release の公開と匿名 pull は、公開まで UNRUN です。
+所有者は使い捨て amd64 sandbox への導入、reboot、runtime 検証を承認しています。
+[限定的な spike](test-evidence/issue-19-spike.json) は診断の参考情報であり、最終ビルドの検証結果ではありません。
+再ビルドしたローカル Standard amd64 installer／probe の組では、最終 Python launcher と proc/sysfs 79項目が成功しました。[安全に整えた結果](test-evidence/issue-19-native-proc.json) と [実測証跡](test-evidence/issue-19-native.json) に、producer の source／binary／supervisor hash、導入済みファイルの照合、CRI namespace、spike 設定除去後の新規登録と後始末を記録しています。既存 sandbox の設定初期化であり、OS の新規インストールではありません。probe 後に mgr/fs を再起動し、Docker／privileged child／kind／Helm／DNS／通常 Pod の検査も成功しました。extension service に Talos の health probe はなく表示は `?` です。Running と後続の runtime 成功を根拠とし、health probe の成功とは扱いません。
 使い捨て fixture の環境がなければ、前提条件を理由として UNRUN と記録し、省略や成功扱いをしません。
 
 ### sysfs の前提と実行経路

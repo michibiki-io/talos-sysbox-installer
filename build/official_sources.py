@@ -4,9 +4,12 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -24,19 +27,63 @@ def verify_catalogue(lock, entries):
             raise RuntimeError('Official extension is absent from the pinned Talos catalogue: '+name)
 
 
+SOURCE_CACHE = Path('/source-cache')
+
+
+def transient_download_error(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (408, 429, 500, 502, 503, 504)
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    return (isinstance(reason, (TimeoutError, ConnectionResetError)) or
+            isinstance(reason, socket.gaierror) and reason.errno == socket.EAI_AGAIN)
+
+
 def download(spec, target):
     target.parent.mkdir(parents=True, exist_ok=True)
-    cache=Path('/source-cache')/spec['sha256']
-    if cache.is_file() and hashlib.file_digest(cache.open('rb'),'sha256').hexdigest()==spec['sha256']:
-        shutil.copy2(cache,target);return
-    with urllib.request.urlopen(spec['url'],timeout=180) as response, target.open('wb') as out:
-        digest=hashlib.sha256()
-        while data:=response.read(1024*1024):
-            digest.update(data);out.write(data)
-    if digest.hexdigest()!=spec['sha256']:
-        target.unlink()
-        raise RuntimeError('Official source checksum mismatch: '+spec['url'])
-    cache.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(target,cache)
+    cache=SOURCE_CACHE/spec['sha256']
+    if cache.is_file():
+        with cache.open('rb') as stored:
+            if hashlib.file_digest(stored,'sha256').hexdigest()==spec['sha256']:
+                shutil.copy2(cache,target);return
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(spec['url'],timeout=180) as response, target.open('wb') as out:
+                digest=hashlib.sha256()
+                while data:=response.read(1024*1024):
+                    digest.update(data);out.write(data)
+        except (urllib.error.URLError, TimeoutError, ConnectionResetError) as error:
+            target.unlink(missing_ok=True)
+            if not transient_download_error(error) or attempt == 2:
+                raise
+            print('Retrying transient locked-input download: '+spec['url'],flush=True)
+            time.sleep(2**attempt)
+            continue
+        if digest.hexdigest()!=spec['sha256']:
+            target.unlink()
+            raise RuntimeError('Official source checksum mismatch: '+spec['url'])
+        cache.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(target,cache)
+        return
+
+
+def download_go_module(module, directory, env):
+    for attempt in range(3):
+        try:
+            output=subprocess.check_output(['go','mod','download','-json',module],cwd=directory,env=env,text=True,timeout=180)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            details=error.output or ''
+            if isinstance(details,bytes): details=details.decode(errors='replace')
+            message=details.lower()
+            permanent=any(marker in message for marker in ('checksum mismatch','security error','x509:','failed to verify certificate','bad certificate','certificate verification','certificate has expired','401 unauthorized','403 forbidden'))
+            temporary=isinstance(error,subprocess.TimeoutExpired) or any(marker in message for marker in (
+                'temporary failure in name resolution','server misbehaving','network is unreachable',
+                'i/o timeout','connection reset by peer','context deadline exceeded','tls handshake timeout',
+                '500 internal server error','502 bad gateway','503 service unavailable','504 gateway timeout','429 too many requests'))
+            if permanent or not temporary or attempt == 2:
+                raise RuntimeError('Corresponding Go source download failed: '+(details or str(error))) from error
+            print('Retrying transient checksum-verified Go source download: '+module,flush=True)
+            time.sleep(2**attempt)
+            continue
+        return json.loads(output)
 
 
 def is_notice(name):
@@ -102,7 +149,7 @@ def collect(lock, source_root, licenses, manifest_path):
     with tempfile.TemporaryDirectory(prefix='official-modules-') as tmp:
         for module in sorted(modules):
             print('Retaining corresponding Go module: '+module,flush=True)
-            result=json.loads(subprocess.check_output(['go','mod','download','-json',module],cwd=tmp,env=env,text=True))
+            result=download_go_module(module,tmp,env)
             if result.get('Error') or not result.get('Sum') or not result.get('GoModSum'):
                 raise RuntimeError('Incomplete checksum-verified corresponding Go source: '+module)
             relative=Path(result['Zip']).relative_to(Path('/root/go/pkg/mod/cache/download')).parent

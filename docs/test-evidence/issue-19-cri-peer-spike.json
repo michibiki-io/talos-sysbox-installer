@@ -1,0 +1,22 @@
+{
+  "purpose": "additional namespace spike; not final-build validation",
+  "status": "PASS",
+  "namespace_cleanup": "PASS",
+  "socket_peer_initial_root": true,
+  "peer_launcher_init_pid_user_namespaces_equal": true,
+  "initial_uid_map": true,
+  "source_sha256": "a8fc548802731c6f538b47bdab3c14c1e7170dede247d0f734da4973f66aa2c0",
+  "binary_sha256": "a25e2265438097b2d9b64cccb21d3fdc1b625f2c5fe6dd385d17ecf7a809c0ac",
+  "schema_version": 1,
+  "talos": "1.14.5",
+  "architecture": "amd64",
+  "workloadIsolation": true,
+  "source_base_commit": "d516dac73acb80c5c327bdb1a8977168debe7cf9",
+  "tool_build_image": "docker.io/library/golang:1.26.10@sha256:cfa27959837144bf4649802ba38e59daffd0dd2a7994aa83daaf113285b0f551",
+  "scope": "Independent Go SO_PEERCRED measurement on the retained SPIKE VM; does not execute the final production Python launcher",
+  "not_run": [
+    "production-launcher validation",
+    "pidfd lifecycle rejection cases",
+    "full proc/sysfs runtime suite"
+  ]
+}

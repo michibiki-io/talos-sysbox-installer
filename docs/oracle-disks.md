@@ -17,7 +17,7 @@
 
 ### Artifacts and validation limits
 
-New releases add **Standard / oracle / arm64** installed disks alongside the existing container images. The official Talos 1.12.6 oracle profile supplies metadata v2 behavior. The disk uses ARM64 UEFI/systemd-boot/UKI and exactly one `console=ttyAMA0,9600`; this replaces Oracle's default `tty1` and `ttyS0` through imager console-overwrite semantics. Every generated UKI is inspected. The generator does not extract/reassemble an installer UKI or rebuild Sysbox.
+New releases add **Standard / oracle / arm64** installed disks alongside the existing container images. The official Talos 1.14.5 oracle profile supplies metadata v2 behavior. The disk uses ARM64 UEFI/systemd-boot/UKI and exactly one `console=ttyAMA0,9600`; this replaces Oracle's default `tty1` and `ttyS0` through imager console-overwrite semantics. Every generated UKI is inspected. The generator does not extract/reassemble an installer UKI or rebuild Sysbox.
 
 | Asset | Meaning |
 | --- | --- |
@@ -26,7 +26,7 @@ New releases add **Standard / oracle / arm64** installed disks alongside the exi
 | `arm64-standard-oracle.inputs.json` | Immutable input references, Standard correspondence, recipe/tool identities, file metrics and inspection results |
 | `arm64-standard-oracle.sha256` | Separate hashes for compressed QCOW2, decompressed QCOW2, VMDK and inputs JSON |
 
-Both disk formats have exactly **53,687,091,200 bytes (50 GiB)** virtual capacity and no backing image. This does not mean a 50 GiB physical download. The raw imager scratch request is 2 GiB; Talos adds its version-specific partition overhead. After imager stops, the raw disk grows sparsely to 50 GiB, backup GPT moves to the new end, and primary/backup GPT CRCs and partition bounds are checked. EFI/META partition hashes must remain identical before/after normalization. The normalized stopped raw is compared against QCOW2 and VMDK with `qemu-img compare`; QCOW2 also passes `qemu-img check` and a decompression hash roundtrip.
+Both disk formats have exactly **53,687,091,200 bytes (50 GiB)** virtual capacity and no backing image. This does not mean a 50 GiB physical download. The raw imager scratch request is 2 GiB; the resulting total is inspected rather than inferred from diskSize. After imager stops, the raw disk grows sparsely to 50 GiB, backup GPT moves to the new end, and primary/backup GPT CRCs and partition bounds are checked. EFI/META partition hashes must remain identical before/after normalization. The normalized stopped raw is compared against QCOW2 and VMDK with `qemu-img compare`; QCOW2 also passes `qemu-img check` and a decompression hash roundtrip.
 
 Static inspection checks the actual ARM64 EFI bootloader and UKI, `.linux` as either ARM64 Image or ARM64 EFI zboot PE, and `.initrd` compression by magic (including concatenated zstd frames). All three embedded extension rootfs inventories and manifest metadata must match the exact Standard inputs. Sysbox executable hashes additionally match Standard's build metadata and their ELF machine is ARM64.
 
@@ -45,44 +45,40 @@ Use Linux, Docker/Buildx and the repository's Python standard-library orchestrat
 After an existing native ARM64 Standard build, reuse its verified OCI layout and metadata:
 
 ```sh
-python3 scripts/build.py --version 0.6.0 --arch arm64 --with-probe --output .build/arm64
+python3 scripts/build.py --version 0.7.0 --arch arm64 --with-probe --output .build/arm64
 python3 scripts/oracle_disk.py --build-output .build/arm64
 ```
 
 The second command writes `.build/arm64/oracle/` and adds `disk_artifacts` to that build's `images.json` only after successful validation. It refuses existing disk output or an existing disk record. It uses exactly the same ordered Sysbox/iscsi-tools/util-linux-tools input set as Standard. VMware inputs are not used.
 
-To reuse the immutable public v0.5.0 ARM64 Standard inputs on either executor architecture:
+To reuse published inputs, select a new release built with this Talos 1.14.5 recipe. Do not pass historical v0.5.0/Talos 1.12.6 inputs to the current generator; reproduce those using their matching repository revision and recipe. The historical local evidence above remains a Talos 1.12.6 record.
 
 ```sh
-mkdir -p .build/oracle-original-inputs
-gh release download v0.5.0 --repo michibiki-io/talos-sysbox-installer \
+mkdir -p .build/oracle-release-inputs
+gh release download NEW_TAG --repo michibiki-io/talos-sysbox-installer \
   --pattern release-images.json --pattern arm64-build-metadata.json \
-  --dir .build/oracle-original-inputs
+  --dir .build/oracle-release-inputs
 python3 scripts/oracle_disk.py \
-  --release-inputs .build/oracle-original-inputs/release-images.json \
-  --build-metadata .build/oracle-original-inputs/arm64-build-metadata.json \
-  --output .build/oracle-preview --project-version 0.6.0-preview
+  --release-inputs .build/oracle-release-inputs/release-images.json \
+  --build-metadata .build/oracle-release-inputs/arm64-build-metadata.json \
+  --output .build/oracle-preview --project-version 0.7.0
 ```
 
 Choose a fresh output path. `--builder NAME` selects an existing Buildx builder; it never reconfigures or removes other builders. Public extension payload containers are created/exported for static inspection but never started. Published v0.5.0 tags and release assets are not changed. Reproduction means using the same pinned inputs and recipe and passing the same checks; random GPT/FAT identifiers mean byte-identical hashes across independent generations are not promised. Release reruns retain the original disk bytes rather than regenerate them.
 
 ### Isolation and failure recovery
 
-The generator has a private Docker `/dev`; it never binds host `/dev` or receives a physical host disk path. It has `SYS_ADMIN` for loop ioctls/mounting its own EFI filesystem, `MKNOD` for selected device nodes, and scoped file-ownership capabilities. AppArmor is disabled only for this container's mount operations; default Docker seccomp and no-new-privileges remain. Device cgroup rules permit loop-control, block major 7 (loop), and block major 259 (extended partitions). Major 259 also includes NVMe, so private node visibility and backing checks remain necessary. Only launcher-created nodes are visible. Kernel-registered partition numbers are read from sysfs, never predicted.
+Talos 1.14.5 imager writes its raw disk directly without loop devices or mounted filesystems. The generator runs as the caller's UID/GID with all capabilities dropped, no-new-privileges, and default Docker seccomp/AppArmor. It receives only the task's input/output directories, no host block devices or host `/dev`. The pinned official imager and its boot assets are unchanged; the historical loop/formatter gate is no longer used.
 
-The launcher selects a verified-unused loop, records it, and lets the unchanged official imager attach its scratch. A PATH gate runs before the first EFI formatter: it checks LOOP_GET_STATUS64 backing device/inode against the scratch, creates only that loop's already-registered EFI/META nodes, then execs the original official mkfs.vfat with unchanged arguments. This synchronizes node visibility before META is opened. The imager binary, boot assets and profile semantics are unchanged; the gate recipe hash is recorded. A race selecting a different free loop fails closed. There is no fallback to host `/dev` sharing.
+Generation is limited to two CPUs (also a two-CPU affinity), 4 GiB RAM with no additional swap, 256 PIDs and a 2 GiB `/tmp` tmpfs. At least 12 GiB free space is required before generation/conversion; the small raw scratch and the existing per-asset 2 GiB limit bound normal output use. Concurrent capacity loss fails the run without publication. Conversion has no block devices, SYS_ADMIN or network; DAC_OVERRIDE only permits access to the task-owned directory.
 
-Generation is limited to two CPUs (also a two-CPU affinity), 4 GiB RAM with no additional swap, 256 PIDs and a 2 GiB `/tmp` tmpfs. At least 12 GiB free space is required before generation/conversion; the small raw scratch and the existing per-asset 2 GiB limit bound normal output use. Other host workloads may consume space concurrently; any resulting failure prevents success publication. Nonprivileged conversion has no block devices or SYS_ADMIN and no network; DAC_OVERRIDE only lets its root process access the task-owned directory.
-
-Only uniquely named/labeled task containers are stopped/removed. The launcher detaches only a loop whose backing device/inode still matches its scratch. A separate audit runs after the generator container stops, including after failure, and confirms unbound/owned cleanup. Unknown or foreign mappings are left untouched and fail the run. No global detach, Docker prune or host kernel/security change is used.
-
-Failed runs retain a unique `<output>.partial-*` directory with `FAILED.txt`, logs and any loop journal; no success directory/record is produced. Keep that directory until owned-loop reconciliation succeeds. Diagnose `generator.log`, `conversion.log` and `loop.json`; do not delete backing scratch while it may still be attached. Never detach another task's device. Successful runs retain their partial-named working directory as local evidence (without `FAILED.txt`); only the four files in the success output directory are distribution assets. Remove only this task's retained scratch after confirming its journal and container cleanup.
+Only uniquely named/labeled task containers are stopped/removed, including on failure. No loop mappings are created, audited or detached. No Docker prune or host kernel/security change is used. Failed runs retain a unique `<output>.partial-*` directory with `FAILED.txt` and logs; no success directory/record is produced. Inspect `generator.log` and `conversion.log`, and confirm owned-container cleanup before removing only this task's scratch. Successful runs retain their working directory as evidence; only the four files in the success output directory are distribution assets.
 
 The existing Standard/probe corresponding-source collection retains its fixed Ubuntu snapshot. If snapshot source-file retrieval exhausts its retries with HTTP 503, `build/ubuntu_sources.py` obtains the expected file names, sizes and SHA256/SHA512 values from apt's already authenticated snapshot Sources indexes. It fetches those exact bytes from the official `archive.ubuntu.com` pool; only a pool HTTP 404 permits the exact package/version publication in Ubuntu Launchpad (including its librarian redirect). It validates the index's strong hash and also records SHA256, then reruns the original apt command to revalidate the complete source set. No package version or index changes; signature/hash/authentication errors and unavailable indexes fail closed. If a batch specifies multiple versions of the same source package, a pool HTTP 404 stops retrieval because the publication version is ambiguous; no candidate guessing is performed. Used fallback URLs and hashes are recorded in Standard build metadata (`ubuntu_source_fallbacks`) or the probe's `ubuntu-source-fallbacks.json`, and all source files remain in the source offering.
 
 ### Download and release records
 
-The PR Test workflow generates ARM64 disks and uploads all four files as the downloadable `standard-oracle-arm64` artifact (14-day retention):
+The PR Test workflow generates ARM64 disks and uploads all four files as the downloadable `standard-oracle-arm64` artifact (14-day retention). This expiry applies to temporary CI artifacts; published GitHub Release assets are separate downloads and do not use that CI retention period:
 
 ```sh
 gh run download RUN_ID --repo michibiki-io/talos-sysbox-installer \
@@ -105,7 +101,7 @@ The checksum list includes the **decompressed** `.qcow2`, which is not a separat
 ### 成果物と検証範囲
 
 新しいリリースでは、既存コンテナイメージに **Standard / oracle / arm64** のインストール済み起動ディスクを追加します。
-公式 Talos 1.12.6 の oracle profile を使用し、metadata v2、ARM64 UEFI、systemd-boot、UKI を扱います。
+公式 Talos 1.14.5 の oracle profile を使用し、metadata v2、ARM64 UEFI、systemd-boot、UKI を扱います。
 console は `console=ttyAMA0,9600` の 1 個に固定します。
 imager の上書き仕様により既定の `tty1` と `ttyS0` が置換され、生成した全 UKI の実際の引数を検査します。
 installer の UKI を分解して組み直す処理や、Oracle 専用の Sysbox 再ビルドはありません。
@@ -119,7 +115,7 @@ installer の UKI を分解して組み直す処理や、Oracle 専用の Sysbox
 
 QCOW2 と VMDK の仮想容量は、どちらも正確に **53,687,091,200 bytes（50 GiB）** です。
 backing image はありません。
-imager に要求する raw scratch は 2 GiB で、Talos が版固有のパーティション用領域を加算します。
+imager に要求する raw scratch は 2 GiB で、diskSize と生成後の総容量を同一とは仮定せず、実測します。
 imager の停止後に raw を sparse 拡張し、backup GPT を新しい末尾へ移します。
 前後の EFI/META の内容を hash で比較し、両 GPT の CRC、配置、パーティション境界を検査します。
 この正規化済み停止 raw と QCOW2/VMDK のゲスト可視内容を `qemu-img compare` で比較します。
@@ -162,7 +158,9 @@ Linux、Docker/Buildx、既存の Python 標準ライブラリによる起動処
 既存の出力やディスク記録がある場合は上書きせず停止します。
 Standard と同じ順序の Sysbox、iscsi-tools、util-linux-tools を使用し、VMware の拡張は使用しません。
 
-公開済み v0.5.0 の入力から生成する場合は、英語節の `gh release download` と `--release-inputs` のコマンドを使用します。
+公開入力を再利用する場合は、この Talos 1.14.5 用の生成処理と一致する新リリースを指定し、英語節のコマンドを使用します。
+v0.5.0／Talos 1.12.6 の再現には、その版に対応する repository revision と生成処理を使います。
+上記の過去のローカル証跡は Talos 1.12.6 の記録です。
 出力先には未作成のパスを指定します。
 `--builder NAME` は既存 Buildx builder を選ぶだけで、他の builder を変更しません。
 ARM64 拡張のコンテナは静的検査のため create/export しますが、起動しません。
@@ -173,40 +171,22 @@ GPT/FAT の識別子などが生成ごとに変わり得るため、別々の生
 
 ### 隔離と失敗時の復旧
 
-生成コンテナは私有の `/dev` を使い、ホスト `/dev` を共有しません。
-既存ホストディスクのパスも渡しません。
-`SYS_ADMIN` は所有 loop の ioctl と EFI mount、`MKNOD` は選択した node の作成に使用します。
-ファイル操作に必要な capability も限定します。
-AppArmor の無効化はこのコンテナだけで、既定 seccomp と no-new-privileges は維持します。
-device cgroup は loop-control、loop の major 7、extended partition の major 259 を許可します。
-major 259 には NVMe も含まれるため、私有 node と backing の所有確認を併用します。
-見える block node は launcher が作ったものだけです。
-partition の番号は sysfs の登録値を使い、予測しません。
-
-launcher は未使用 loop を選択して記録し、公式 imager 自身が scratch を attach します。
-最初の EFI formatter の直前で PATH gate が backing の device/inode を scratch と照合します。
-kernel 登録済みの EFI/META node だけを作成し、元の公式 mkfs.vfat に引数を変えず渡します。
-これにより META が開かれる前に必要な node が揃います。
-公式 imager 本体と boot assets は変更せず、gate の hash を記録します。
-loop 選択が競合した場合は失敗とし、ホスト `/dev` 全体の共有へ切り替えません。
+Talos 1.14.5 の公式 imager は raw ディスクへ直接書き込み、loop device や filesystem mount を必要としません。
+生成コンテナは呼び出し元の UID/GID で実行し、全 capability を drop します。
+no-new-privileges と既定の Docker seccomp／AppArmor を維持します。
+今回の入力と出力だけを mount し、ホスト `/dev` や block device、既存ホストディスクを渡しません。
+公式 imager と boot assets は変更せず、過去の loop／formatter gate は使用しません。
 
 生成は CPU 2 個の affinity と quota、RAM 4 GiB、追加 swap なし、PID 256、`/tmp` tmpfs 2 GiB に制限します。
-生成前と変換前に 12 GiB 以上の空きを要求します。
-小さな raw scratch と既存の各 asset 2 GiB 未満の制約で、通常の出力量を抑えます。
-他のホスト作業によって空きが減り処理が失敗した場合も、成功扱いで公開しません。
+生成前と変換前に 12 GiB 以上の空きを要求し、小さな raw scratch と各 asset 2 GiB 未満の制約を維持します。
+空き容量の減少によって失敗した場合も、成功扱いで公開しません。
 変換コンテナには block node、SYS_ADMIN、ネットワークを与えず、今回の作業ディレクトリへアクセスする DAC_OVERRIDE だけを追加します。
 
-停止と削除の対象は、固有の名前と label を持つ今回のコンテナだけです。
-detach 前に backing の device/inode を再確認します。
-生成コンテナの停止後には、失敗時も含めて別の audit を実行します。
-所有が確認できない mapping は変更せず、処理を失敗させます。
-一括 detach、Docker prune、ホストの kernel/security 設定変更は行いません。
-
-失敗時は `<output>.partial-*` に `FAILED.txt`、ログ、loop 記録を残し、成功出力は作りません。
-`generator.log`、`conversion.log`、`loop.json` を確認し、所有 loop が解放されたことを確認するまでは scratch を削除しません。
-他の作業の device は detach しません。
+失敗時も固有の名前と label を持つ今回のコンテナだけを停止・削除します。
+loop の作成・監査・detach、一括 Docker prune、ホスト kernel/security 設定変更は行いません。
+失敗時は `<output>.partial-*` に `FAILED.txt` とログを残し、成功出力は作りません。
+`generator.log` と `conversion.log` を確認し、所有コンテナの後処理を確認してから今回の scratch だけを削除できます。
 成功時も作業ディレクトリを証跡として残し、配布対象は成功出力内の 4 ファイルだけにします。
-所有 loop とコンテナの後処理を確認してから、今回の scratch だけを削除できます。
 
 既存 Standard/probe の対応ソース収集では、固定した Ubuntu snapshot を維持します。
 ソースファイルの取得が HTTP 503 で再試行を尽くした場合だけ、`build/ubuntu_sources.py` が apt の認証済み snapshot Sources 索引からファイル名、サイズ、SHA256/SHA512 を取得します。
@@ -220,6 +200,7 @@ detach 前に backing の device/inode を再確認します。
 
 PR の Test workflow は、4 ファイル全体を `standard-oracle-arm64` artifact として 14 日間保持します。
 英語節の `gh run download RUN_ID` で取得できます。
+14 日間は一時的な CI artifact の保持期限です。正式な GitHub Release asset は別の配布物であり、この CI 保持期限は適用されません。
 人間によるマージと新リリースの公開後は、`gh release download NEW_TAG` で取得します。
 
 チェックサム一覧には、単独配布しない展開後 `.qcow2` の hash も含みます。

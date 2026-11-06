@@ -695,65 +695,162 @@ class BuildTests(unittest.TestCase):
             digest = build.docker_to_oci(dst, Path(d)/'oci')
             self.assertEqual(json.loads((Path(d)/'oci/index.json').read_text())['manifests'][0]['digest'], digest)
 
-    @unittest.skipUnless(shutil.which('talosctl') or os.environ.get('TALOSCTL_PATH'), 'requires checksum-locked talosctl')
-    def test_talos_parser_replaces_entry_in_single_and_multi_document_configs(self):
-        binary=os.environ.get('TALOSCTL_PATH') or shutil.which('talosctl')
-        files=[{'path':'/var/other','permissions':420,'op':'create','content':'unchanged'},
-               {'path':'/etc/cri/conf.d/20-customization.part','permissions':384,'op':'create','content':''}]
-        original={'version':'v1alpha1','machine':{'type':'worker','files':files}}
-        extra='---\napiVersion: v1alpha1\nkind: HostnameConfig\nhostname: test-host\n'
-        patch=runtime.machine_file_patch('',files)
+    def test_nested_kind_networks_reject_outer_dns_and_pod_cidr_overlap(self):
+        outer=['10.244.0.0/24','10.96.0.0/12','172.18.0.0/16','192.168.0.81']
+        config=validation.kind_configuration('10.200.0.0/16','10.201.0.0/16',outer)
+        self.assertEqual(config['networking']['podSubnet'],'10.200.0.0/16')
+        self.assertEqual(config['networking']['serviceSubnet'],'10.201.0.0/16')
+        for pod,service in [('10.244.0.0/16','10.201.0.0/16'),
+                            ('10.200.0.0/16','10.96.0.0/16'),
+                            ('172.18.0.0/24','10.201.0.0/16'),
+                            ('10.200.0.0/16','10.200.1.0/24'),
+                            ('fd00::/64','10.201.0.0/16')]:
+            with self.subTest(pod=pod,service=service),self.assertRaises(ValueError):
+                validation.kind_configuration(pod,service,outer)
+        with self.assertRaises(ValueError):validation.kind_configuration('10.200.0.0/16','10.201.0.0/16',[])
+
+    def test_kind_rejects_unallocated_ranges_inside_the_outer_cluster_pod_cidr(self):
+        for args in (['--cluster-cidr=10.244.0.0/16'],['--cluster-cidr','10.244.0.0/16,fd00::/48']):
+            pods=[{'spec':{'containers':[{'command':['kube-controller-manager'],'args':args}]}}]
+            networks=validation.cluster_pod_networks(pods)
+            self.assertIn('10.244.0.0/16',networks)
+            with self.assertRaisesRegex(ValueError,'overlaps'):
+                validation.kind_configuration('10.244.1.0/24','10.201.0.0/16',networks)
+        with self.assertRaisesRegex(ValueError,'inventory'):
+            validation.cluster_pod_networks([])
+
+    def test_validation_checks_host_client_pins_separately_from_inner_kubectl(self):
         with tempfile.TemporaryDirectory() as d:
-            config=Path(d)/'config.yaml';patchfile=Path(d)/'patch.json'
-            patchfile.write_text(json.dumps(patch))
+            binaries={name:Path(d)/name for name in ('kubectl','talosctl')}
+            for name,path in binaries.items():path.write_bytes(('locked-'+name).encode())
+            specs={name:{'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for name,path in binaries.items()}
+            lock={'architecture':'amd64','test_tools':{'outer_kubectl':specs['kubectl'],'talosctl':specs['talosctl'],
+                                                      'kubectl':{'sha256':'0'*64}}}
+            with mock.patch.object(validation,'host_lock',return_value=lock), \
+                 mock.patch.object(validation.shutil,'which',side_effect=lambda name:str(binaries[name])):
+                self.assertEqual(validation.verify_clients(),{'architecture':'amd64','sha256':{name:spec['sha256'] for name,spec in specs.items()}})
+                binaries['kubectl'].write_bytes(b'inner-client-must-not-be-used-for-outer-API')
+                with self.assertRaisesRegex(RuntimeError,'kubectl'):validation.verify_clients()
+
+    @unittest.skipUnless(shutil.which('talosctl') or os.environ.get('TALOSCTL_PATH'), 'requires checksum-locked talosctl')
+    def test_talos_parser_adds_native_cri_sysctl_documents_without_replacing_other_config(self):
+        binary=os.environ.get('TALOSCTL_PATH') or shutil.which('talosctl')
+        original={'version':'v1alpha1','machine':{'type':'worker','files':[
+            {'path':'/var/other','permissions':420,'op':'create','content':'unchanged'}]}}
+        extra='---\napiVersion: v1alpha1\nkind: HostnameConfig\nhostname: test-host\n'
+        with tempfile.TemporaryDirectory() as d:
+            config=Path(d)/'config.yaml';patchfile=Path(d)/'patch.yaml'
+            patchfile.write_text(runtime.encode_documents(runtime.configuration('')))
             for suffix in ('',extra):
                 config.write_text(json.dumps(original)+'\n'+suffix)
                 result=subprocess.run([binary,'machineconfig','patch',str(config),'--patch','@'+str(patchfile)],capture_output=True,text=True,check=True)
-                # Use another strategic delete as a semantic assertion: Talos
-                # fails a selector that cannot find its preserved other entry.
-                other={'machine':{'files':[{'path':'/var/other','$patch':'delete'}]}}
                 patched=Path(d)/'patched.yaml';patched.write_text(result.stdout)
+                other={'machine':{'files':[{'path':'/var/other','$patch':'delete'}]}}
                 subprocess.run([binary,'machineconfig','patch',str(patched),'--patch',json.dumps(other)],capture_output=True,text=True,check=True)
-                self.assertEqual(result.stdout.count('path: /etc/cri/conf.d/20-customization.part'),1)
+                self.assertEqual(result.stdout.count('kind: CRICustomizationConfig'),1)
+                self.assertIn('kind: SysctlConfig',result.stdout)
+                self.assertIn('user.max_user_namespaces:',result.stdout)
                 self.assertIn('content: unchanged',result.stdout)
                 self.assertIn('sysbox-runc',result.stdout)
-                self.assertIn('permissions: 0o600',result.stdout)
+                self.assertNotIn('20-customization.part',result.stdout)
                 if suffix:self.assertIn('kind: HostnameConfig',result.stdout)
 
-    def test_runtime_merge_preserves_default_and_other_handlers(self):
+    def test_runtime_document_is_additive_and_preserves_handler_contract(self):
         existing = '''[plugins."io.containerd.cri.v1.runtime".containerd]
 default_runtime_name="runc"
-[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runc.options]
-SystemdCgroup=true
 [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.other.options]
 BinaryName="/other"
 '''
-        result = tomllib.loads(runtime.merge(existing))['plugins']['io.containerd.cri.v1.runtime']['containerd']
-        self.assertEqual(result['default_runtime_name'], 'runc')
-        self.assertEqual(result['runtimes']['other']['options']['BinaryName'], '/other')
-        self.assertTrue(result['runtimes']['runc']['options']['SystemdCgroup'])
-        self.assertFalse(result['runtimes']['sysbox-runc']['options']['SystemdCgroup'])
-        with self.assertRaises(ValueError): runtime.merge(runtime.HANDLER)
+        sysctl,customization=runtime.configuration(existing)
+        self.assertEqual(sysctl['params'],{'user.max_user_namespaces':'11255'})
+        self.assertEqual(customization['kind'],'CRICustomizationConfig')
+        self.assertEqual(customization['name'],'sysbox')
+        config=tomllib.loads(customization['content'])
+        containerd=config['plugins']['io.containerd.cri.v1.runtime']['containerd']
+        self.assertNotIn('default_runtime_name',containerd)
+        self.assertEqual(set(containerd['runtimes']),{'sysbox-runc'})
+        handler=containerd['runtimes']['sysbox-runc']
+        self.assertEqual(handler['runtime_type'],'io.containerd.runc.v2')
+        self.assertEqual(handler['base_runtime_spec'],'/etc/cri/conf.d/base-spec.json')
+        self.assertEqual(handler['options'],{'BinaryName':'/usr/local/bin/sysbox-runc','SystemdCgroup':False})
 
-    def test_existing_machine_file_is_replaced_not_appended(self):
-        files=[{'path':'/var/other','content':'unchanged'},
-               {'path':'/etc/cri/conf.d/20-customization.part','content':'','permissions':384}]
-        patch=runtime.machine_file_patch('',files)
-        self.assertEqual(patch['version'],'v1alpha1')
-        self.assertEqual(patch['machine']['files'][0],{'path':'/etc/cri/conf.d/20-customization.part','$patch':'delete'})
-        self.assertEqual(files[0]['content'],'unchanged')
-        self.assertEqual(patch['machine']['files'][1]['op'],'create')
-        self.assertEqual(patch['machine']['files'][1]['permissions'],384)
-        with self.assertRaises(ValueError):runtime.machine_file_patch('',files+[files[1]])
-        with self.assertRaises(ValueError):runtime.machine_file_patch('',files[:1])
+    def test_duplicate_handler_or_disabled_user_namespaces_are_rejected(self):
+        with self.assertRaisesRegex(ValueError,'already exists'):
+            runtime.configuration(runtime.HANDLER)
+        for count in (0,-1,True,2**31):
+            with self.subTest(count=count),self.assertRaises(ValueError):
+                runtime.configuration('',count)
+        with self.assertRaises(tomllib.TOMLDecodeError):
+            runtime.configuration('not = [valid')
 
-    def test_stale_or_empty_fragment_cannot_discard_existing_handlers(self):
-        existing='[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.other.options]\nBinaryName="/other"\n'
-        files=[{'path':'/etc/cri/conf.d/20-customization.part','content':existing}]
-        for stale in ('',existing+'\n'):
-            with self.assertRaisesRegex(ValueError,'exactly match'):runtime.machine_file_patch(stale,files)
-        patch=runtime.machine_file_patch(existing,files)
-        config=tomllib.loads(patch['machine']['files'][1]['content'])
-        self.assertEqual(config['plugins']['io.containerd.cri.v1.runtime']['containerd']['runtimes']['other']['options']['BinaryName'],'/other')
+    def test_runtime_configuration_file_is_private_and_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            source=Path(d)/'current.toml';source.write_text('')
+            output=Path(d)/'runtime.yaml'
+            argv=['runtime_patch.py','--input-fragment',str(source),'--output',str(output),'--no-existing-customization']
+            with mock.patch.object(sys,'argv',argv):runtime.main()
+            contents=output.read_bytes()
+            self.assertEqual(output.stat().st_mode & 0o777,0o600)
+            self.assertEqual(contents.decode(),runtime.encode_documents(runtime.configuration('')))
+            with mock.patch.object(sys,'argv',argv),self.assertRaises(FileExistsError):runtime.main()
+            self.assertEqual(output.read_bytes(),contents)
+
+class SourceDownloadTests(unittest.TestCase):
+    def test_transient_dns_retry_preserves_fixed_url_hash_and_verified_cache(self):
+        import socket
+        import urllib.error
+        data=b'locked source';spec={'url':'https://source.example/fixed.tar','sha256':hashlib.sha256(data).hexdigest()}
+        with tempfile.TemporaryDirectory() as work:
+            target=Path(work)/'output/archive';cache=Path(work)/'cache'
+            failure=urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN,'temporary failure'))
+            with mock.patch.object(official,'SOURCE_CACHE',cache),mock.patch.object(official.urllib.request,'urlopen',side_effect=[failure,io.BytesIO(data)]) as fetch,mock.patch.object(official.time,'sleep') as sleep:
+                official.download(spec,target)
+                self.assertEqual(target.read_bytes(),data)
+                self.assertEqual((cache/spec['sha256']).read_bytes(),data)
+                self.assertEqual(fetch.call_args_list,[mock.call(spec['url'],timeout=180)]*2)
+                sleep.assert_called_once_with(1)
+                target.unlink();official.download(spec,target)
+                self.assertEqual(target.read_bytes(),data);self.assertEqual(fetch.call_count,2)
+
+    def test_auth_tls_and_checksum_failures_are_not_retried_or_cached(self):
+        import ssl
+        import urllib.error
+        spec={'url':'https://source.example/fixed.tar','sha256':hashlib.sha256(b'expected').hexdigest()}
+        failures=[urllib.error.HTTPError(spec['url'],403,'Forbidden',{},None),urllib.error.URLError(ssl.SSLCertVerificationError('bad certificate')),None]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__),tempfile.TemporaryDirectory() as work:
+                target=Path(work)/'archive';cache=Path(work)/'cache'
+                with mock.patch.object(official,'SOURCE_CACHE',cache),mock.patch.object(official.urllib.request,'urlopen') as fetch,mock.patch.object(official.time,'sleep') as sleep:
+                    if failure is None:fetch.return_value=io.BytesIO(b'wrong bytes')
+                    else:fetch.side_effect=failure
+                    with self.assertRaises((urllib.error.URLError,RuntimeError)):official.download(spec,target)
+                    self.assertEqual(fetch.call_count,1);sleep.assert_not_called()
+                    self.assertFalse(target.exists());self.assertFalse((cache/spec['sha256']).exists())
+
+    def test_transient_retries_are_bounded_and_never_publish_partial_source(self):
+        import urllib.error
+        spec={'url':'https://source.example/fixed.tar','sha256':hashlib.sha256(b'expected').hexdigest()}
+        with tempfile.TemporaryDirectory() as work:
+            target=Path(work)/'archive';cache=Path(work)/'cache'
+            failure=urllib.error.HTTPError(spec['url'],503,'Unavailable',{},None)
+            with mock.patch.object(official,'SOURCE_CACHE',cache),mock.patch.object(official.urllib.request,'urlopen',side_effect=failure) as fetch,mock.patch.object(official.time,'sleep') as sleep:
+                with self.assertRaises(urllib.error.HTTPError):official.download(spec,target)
+                self.assertEqual(fetch.call_count,3);self.assertEqual(sleep.call_count,2)
+                self.assertFalse(target.exists());self.assertFalse((cache/spec['sha256']).exists())
+
+class GoSourceDownloadTests(unittest.TestCase):
+    def test_transient_module_retry_keeps_the_same_command_and_verification_environment(self):
+        module='github.com/google/certificate-transparency-go@v1.3.3';env={'GOTOOLCHAIN':'local','GOPROXY':'https://proxy.golang.org','GOSUMDB':'sum.golang.org'}
+        error=subprocess.CalledProcessError(1,['go'],output=json.dumps({'Error':module+': dial tcp [::1]:443: connect: network is unreachable'}))
+        success={'Sum':'verified-module-sum','GoModSum':'verified-mod-sum'}
+        with mock.patch.object(official.subprocess,'check_output',side_effect=[error,json.dumps(success)]) as fetch,mock.patch.object(official.time,'sleep'):
+            self.assertEqual(official.download_go_module(module,'/fixed',env),success)
+            self.assertEqual(fetch.call_args_list,[mock.call(['go','mod','download','-json',module],cwd='/fixed',env=env,text=True,timeout=180)]*2)
+
+    def test_module_security_errors_are_not_retried_and_network_failures_are_bounded(self):
+        for detail,attempts in [('checksum mismatch: SECURITY ERROR; network is unreachable',1),('certificate verification failed: i/o timeout',1),('403 Forbidden',1),('dial tcp: network is unreachable',3)]:
+            with self.subTest(detail=detail),mock.patch.object(official.subprocess,'check_output',side_effect=subprocess.CalledProcessError(1,['go'],output=json.dumps({'Error':detail}))) as fetch,mock.patch.object(official.time,'sleep'):
+                with self.assertRaisesRegex(RuntimeError,'Corresponding Go source download failed') as raised:official.download_go_module('example.org/fixed@v1.0.0','/fixed',{})
+                self.assertIn(detail,str(raised.exception));self.assertEqual(fetch.call_count,attempts)
 
 if __name__ == '__main__': unittest.main()

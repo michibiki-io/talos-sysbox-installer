@@ -40,17 +40,17 @@ def main():
             (local/'lib/containers'/daemon/d).mkdir(exist_ok=True)
     kube=private/'kubeconfig'; talos=private/'talosconfig'
     env=dict(os.environ,KUBECONFIG=str(kube),TALOSCONFIG=str(talos))
-    patch={'machine':{'files':[{'path':'/etc/cri/conf.d/20-customization.part','permissions':420,'op':'create','content':runtime.merge('')}]},'cluster':{'allowSchedulingOnControlPlanes':True}}
+    patch={'version':'v1alpha1','cluster':{'allowSchedulingOnControlPlanes':True}}
     if a.constrained_disk:
-        patch['machine']['kubelet']={'extraArgs':{'eviction-hard':'nodefs.available<5%,imagefs.available<5%,nodefs.inodesFree<5%','eviction-pressure-transition-period':'10s','image-gc-high-threshold':'95','image-gc-low-threshold':'90'}}
-    patch_path=private/'patch.json'; patch_path.write_text(json.dumps(patch)); patch_path.chmod(0o600)
+        patch.setdefault('machine', {})['kubelet']={'extraArgs':{'eviction-hard':'nodefs.available<5%,imagefs.available<5%,nodefs.inodesFree<5%','eviction-pressure-transition-period':'10s','image-gc-high-threshold':'95','image-gc-low-threshold':'90'}}
+    patch_path=private/'patch.yaml'; patch_path.write_text(runtime.encode_documents([patch, *runtime.configuration('')])); patch_path.chmod(0o600)
     base=['talosctl','cluster','--name',name,'--state',str(private/'state')]
     cleanup=False
     outcome={'environment':'talos-in-docker','passed':False,'cleanup':'unrun','checks':{}}
     a.result.unlink(missing_ok=True)
     try:
         with (private/'private.log').open('wb') as log:
-            subprocess.run([*base,'create','docker','--workers','0','--image',image,'--kubernetes-version','1.35.2','--memory-controlplanes','6GiB','--cpus-controlplanes','4','--subnet',a.subnet,'--talosconfig-destination',str(talos),'--config-patch','@'+str(patch_path),'--mount','type=bind,src='+str(local)+',dst=/usr/local'],env=env,stdout=log,stderr=log,check=True,timeout=600)
+            subprocess.run([*base,'create','docker','--workers','0','--image',image,'--kubernetes-version',lock['test_kubernetes'],'--memory-controlplanes','6GiB','--cpus-controlplanes','4','--subnet',a.subnet,'--talosconfig-destination',str(talos),'--config-patch','@'+str(patch_path),'--mount','type=bind,src='+str(local)+',dst=/usr/local'],env=env,stdout=log,stderr=log,check=True,timeout=600)
         context=subprocess.check_output(['kubectl','--kubeconfig',str(kube),'config','current-context'],env=env,text=True).strip()
         subprocess.run(['kubectl','--kubeconfig',str(kube),'--context',context,'apply','-f',str(ROOT/'examples/runtimeclass.yaml')],env=env,capture_output=True,check=True,timeout=60)
         subprocess.run(['python3',str(ROOT/'test/e2e/scripts/validate_runtime.py'),'--kubeconfig',str(kube),'--context',context,'--expected-node',name+'-controlplane-1','--environment','talos-in-docker','--lock',str(a.lock.resolve()),'--build-metadata',str(a.rootfs.resolve().parent/'build-metadata.json'),'--result',str(a.result)],env=env,check=True,timeout=1500)

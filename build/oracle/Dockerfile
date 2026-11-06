@@ -2,20 +2,15 @@
 ARG GO_IMAGE
 ARG UBUNTU_IMAGE
 ARG IMAGER_IMAGE
-FROM ${GO_IMAGE} AS launcher
-WORKDIR /src
-ENV GOMAXPROCS=2
-COPY build/oracle/loop.go ./loop.go
-RUN CGO_ENABLED=0 go build -p=2 -trimpath -ldflags='-s -w -buildid=' -o /loop-gate loop.go
+FROM ${GO_IMAGE} AS certificates
 
 FROM ${IMAGER_IMAGE} AS generator
-COPY --from=launcher /loop-gate /oracle/loop-gate
-COPY --from=launcher /loop-gate /oracle/mkfs.vfat
-ENTRYPOINT ["/oracle/loop-gate"]
+# Talos 1.14 writes the disk directly without loop devices or a formatter shim.
+ENTRYPOINT ["/bin/imager", "-"]
 
 FROM ${UBUNTU_IMAGE} AS tools
 ARG APT_SNAPSHOT
-COPY --from=launcher /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY build/apt_retry.sh /oracle/apt_retry.sh
 RUN test -n "$APT_SNAPSHOT" && rm -f /etc/apt/sources.list.d/* && \
     printf 'deb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-updates main universe\ndeb [check-valid-until=no] http://snapshot.ubuntu.com/ubuntu/%s/ noble-security main universe\n' "$APT_SNAPSHOT" "$APT_SNAPSHOT" "$APT_SNAPSHOT" > /etc/apt/sources.list && \

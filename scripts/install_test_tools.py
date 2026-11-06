@@ -23,7 +23,8 @@ def main():
     destination = ROOT / '.tmp/e2e/bin'
     destination.mkdir(parents=True, exist_ok=True)
     for name in ('kubectl', 'talosctl'):
-        spec = lock['test_tools'][name]
+        # The nested kind cluster deliberately has its own kubectl pin.
+        spec = lock['test_tools']['outer_kubectl' if name == 'kubectl' else name]
         data = urllib.request.urlopen(spec['url'], timeout=120).read()
         if hashlib.sha256(data).hexdigest() != spec['sha256']:
             raise RuntimeError('client checksum mismatch')

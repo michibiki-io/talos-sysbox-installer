@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "issue": 19,
+  "scope": "local unpublished Standard amd64 candidate; exact producer source hashes, not public release availability",
+  "candidate": {
+    "project_version": "0.7.0",
+    "variant": "standard",
+    "architecture": "amd64",
+    "talos": "1.14.5",
+    "sysbox": "0.7.1",
+    "distribution": "local-archive-import-only; never pushed",
+    "installer_image": "ghcr.io/talos145-issue19/talos-sysbox-installer-standard:v0.7.0-talos-v1.14.5",
+    "installer_archive_sha256": "8fba12ffe889b4d529d31f263de665b71624aabb73e0d7ea1ae9c48adb8d3a75",
+    "installer_config_digest": "sha256:479205911fbe8eb4385261755e15f4e310291389aff2f3c4f27e022c6cec3c86",
+    "source_inputs_sha256": {
+      "LICENSE": "b83e1b694a457f45d5e37488b96d33cc472b3a5885c6151573c5b7ea1666e349",
+      "build/Dockerfile": "36018d9fd2f3a886af15538ecf9aca5858e0c4f0ed19c4ba9335c52e9f21196a",
+      "build/apt_retry.sh": "90b48a9d57e953526c4f93248c35a3a9296fb21292a43b1dabbe0bc52348e136",
+      "build/assemble.py": "2bafeecdbe4e1119b4f1d7ceeab18fc0e9be53a3c112280b08e0e092c7330d49",
+      "build/official-sources.lock.json": "9e259af9a94442de5dbef6d8f04a4d834b028d0d86d80f4e3f6a174360f97ba5",
+      "build/official_sources.py": "70e234c5db6f0f4023c45088fbac288b4ed1b9ce2047349d9b71e119bb510f8d",
+      "build/oracle/Dockerfile": "1ac147029b9a804de270696f9dc1fb28850da3cc47626e9b6d31e5679bde2cf3",
+      "build/oracle/inspect.py": "18c78c19de4160b4de7aa83c3d66c7e73a470f1d9a9bdf0f5e10a78e3d572c46",
+      "build/probe_idle.py": "b735da8f49d8c0094cc4959f2ab7c4b30e5279b7cdd71af182182eed23f8b4a5",
+      "build/proc-transfer.lock.json": "b8c51d0956a8ccfa1e56f53b571c245f41619c0d9172aa8c3cea0d1f30f830e1",
+      "build/proc_transfer.py": "0f75b5d1ae1114f782d93ab4189ed7c8f9d6b04b0fa6b8ae972b4da2f17485a6",
+      "build/runtime_exec.py": "7b1cd48200d79bf8e72462df1976b952481029b60b95c188d81cb9fba766821e",
+      "build/runtime_launcher.py": "3b6af6ed49e5e1f0200d53efcf560995f6de3a1548f66101e241ab3b174117d9",
+      "build/sysbox-module-locks/sysbox-fs/go.mod": "0614abe79ba97d8c00e42759dbd2a9acd6b903f48d2c03649767886a4d9399a2",
+      "build/sysbox-module-locks/sysbox-fs/go.sum": "49717422ca86177ea50a702f4c902e7baaaae7868f72cf37dc6562ae0fcf5823",
+      "build/sysbox-module-locks/sysbox-mgr/go.mod": "92c664cc51cdd651660ee29a5ab28b1927dc87586eeeef1b4a1d470993881916",
+      "build/sysbox-module-locks/sysbox-mgr/go.sum": "b949bc093c0b6b8434b22f40d5d0c87c5e10d6492d256f0ba74af9e134f7de9e",
+      "build/sysbox-module-locks/sysbox-runc/go.mod": "8bb3f9b42efe4cea296205dacfceb21e539ec8aa56887ab9ea412a959ee7dec0",
+      "build/sysbox-module-locks/sysbox-runc/go.sum": "ef8c75080bf9375e7ef0ee56fa4903acd03f36d537fa78df29c9949863016fee",
+      "build/sysfs_runtime.py": "53e0ef45d83118c5279eaacde10d31f2679f5fa9222f4675dd1e2aea69c5d0b6",
+      "build/ubuntu_sources.py": "774eae26f56ce45d3f5041f26921fae8908b66567dbf3955df533030ce4bdcf4",
+      "build/validation_image.py": "3ca3b3ed209a1ef78ab8ba19a146dee402c22f355470aa77fd904502c6f87f10",
+      "build/validation_packages.py": "5aff58fcb6b93c5f661057133a9981bd9e9a24812bbba9ba821c9577d55e39ca",
+      "scripts/build.py": "74b44586c147d8c1db0793871d564673c5934ea232acc15cf716b312a1cfcd8d",
+      "scripts/build_validation_image.py": "74921c8db1afdfd86ad9631caf78f2acdd398cfc830a04f2084f51f59831660e",
+      "scripts/disk_artifacts.py": "57c6d598921626e62b1e1ff2633cff288b28e431ee1ed7902d9bbe67a36a8f31",
+      "scripts/oracle_disk.py": "256c9f71d881fa730187094ca86fc5c0b67bfc7538af786cc0990b886052828e",
+      "scripts/proc_transfer_operator.py": "1b2158a80e2418586d9bac63a2ce16659319953ebcb50469e705fb66b02892ed",
+      "scripts/publish.py": "0d83ed09cf46c09d10c6aed4ce01de193fb645d2042080803c92d79e1a317570",
+      "scripts/update_proc_transfer.py": "49d06fd2c3be21119d15bcf9c9e4a1f2b7f0ec2b2827e388317b51b6f94f1486",
+      "supervisor/go.mod": "a1aedd6f5da911df26db3694f8dde18e539df23b89f40cac3aad84518e580372",
+      "supervisor/main.go": "0f560d8d8cec4b2985e6d1fac745dbcc1e0e4a893b38c3969df483ca86dba0db",
+      "supervisor/main_test.go": "e53878ecf0d89591fee39e09a651cc3a64f969a2f918aceafed9f17b91c3150f",
+      "versions.lock.json": "838fbe4dcc22aa39ed3eecedb52a8f4f45dbe2bac068578e32f437ea564d7b9a"
+    },
+    "binary_sha256": {
+      "proc-mount-helper": "aad580cb7080f67db017d5313e057f0f25d6ff3774d6ad8e6b15eaac382bcec6",
+      "sysbox-fs": "38184075e5570b7a8f5cbee2380efd8a3fb96984792fa10dd1642987c9c60ec4",
+      "sysbox-mgr": "11a2c955be3fdb0a31a6ef9a57f0117b60583591e1fc96b3c706dace354bf6dc",
+      "sysbox-runc": "45f4b34e59c92d2127850f8198ab5c90bc46a74b8dd5dd329cda475ca8fa8040",
+      "sysfs-mount-helper": "adeac7d2ac71f662e3895b8d13149939cdbd265dad0ebe525c027d9f6b9232d9"
+    },
+    "supervisor_sha256": "0838dbd55055c6b13fa81a0c47ffbf43268aa32f093c0e50452efe83d1901035",
+    "production_metadata_sha256": "b9509250e90f1f1200a30c2a4d70e6932471006af8ac4fda631678dc72aa0ad1"
+  },
+  "installed_artifacts": {
+    "status": "PASS",
+    "variant": "standard",
+    "architecture": "amd64",
+    "talos": "1.14.5",
+    "artifact_sha256": {
+      "/usr/local/bin/sysbox-runc": "45f4b34e59c92d2127850f8198ab5c90bc46a74b8dd5dd329cda475ca8fa8040",
+      "/usr/local/bin/sysbox-mgr": "11a2c955be3fdb0a31a6ef9a57f0117b60583591e1fc96b3c706dace354bf6dc",
+      "/usr/local/bin/sysbox-fs": "38184075e5570b7a8f5cbee2380efd8a3fb96984792fa10dd1642987c9c60ec4",
+      "/usr/local/lib/containers/sysbox-fs/sysbox-fs": "38184075e5570b7a8f5cbee2380efd8a3fb96984792fa10dd1642987c9c60ec4",
+      "/usr/local/lib/containers/sysbox-fs/proc-mount-helper": "aad580cb7080f67db017d5313e057f0f25d6ff3774d6ad8e6b15eaac382bcec6",
+      "/usr/local/lib/containers/sysbox-fs/sysfs-mount-helper": "adeac7d2ac71f662e3895b8d13149939cdbd265dad0ebe525c027d9f6b9232d9",
+      "/usr/local/lib/containers/sysbox-mgr/supervisor": "0838dbd55055c6b13fa81a0c47ffbf43268aa32f093c0e50452efe83d1901035",
+      "/usr/local/lib/containers/sysbox-fs/supervisor": "0838dbd55055c6b13fa81a0c47ffbf43268aa32f093c0e50452efe83d1901035"
+    },
+    "source_inputs_sha256": {
+      "LICENSE": "b83e1b694a457f45d5e37488b96d33cc472b3a5885c6151573c5b7ea1666e349",
+      "build/Dockerfile": "36018d9fd2f3a886af15538ecf9aca5858e0c4f0ed19c4ba9335c52e9f21196a",
+      "build/apt_retry.sh": "90b48a9d57e953526c4f93248c35a3a9296fb21292a43b1dabbe0bc52348e136",
+      "build/assemble.py": "2bafeecdbe4e1119b4f1d7ceeab18fc0e9be53a3c112280b08e0e092c7330d49",
+      "build/official-sources.lock.json": "9e259af9a94442de5dbef6d8f04a4d834b028d0d86d80f4e3f6a174360f97ba5",
+      "build/official_sources.py": "70e234c5db6f0f4023c45088fbac288b4ed1b9ce2047349d9b71e119bb510f8d",
+      "build/oracle/Dockerfile": "1ac147029b9a804de270696f9dc1fb28850da3cc47626e9b6d31e5679bde2cf3",
+      "build/oracle/inspect.py": "18c78c19de4160b4de7aa83c3d66c7e73a470f1d9a9bdf0f5e10a78e3d572c46",
+      "build/probe_idle.py": "b735da8f49d8c0094cc4959f2ab7c4b30e5279b7cdd71af182182eed23f8b4a5",
+      "build/proc-transfer.lock.json": "b8c51d0956a8ccfa1e56f53b571c245f41619c0d9172aa8c3cea0d1f30f830e1",
+      "build/proc_transfer.py": "0f75b5d1ae1114f782d93ab4189ed7c8f9d6b04b0fa6b8ae972b4da2f17485a6",
+      "build/runtime_exec.py": "7b1cd48200d79bf8e72462df1976b952481029b60b95c188d81cb9fba766821e",
+      "build/runtime_launcher.py": "3b6af6ed49e5e1f0200d53efcf560995f6de3a1548f66101e241ab3b174117d9",
+      "build/sysbox-module-locks/sysbox-fs/go.mod": "0614abe79ba97d8c00e42759dbd2a9acd6b903f48d2c03649767886a4d9399a2",
+      "build/sysbox-module-locks/sysbox-fs/go.sum": "49717422ca86177ea50a702f4c902e7baaaae7868f72cf37dc6562ae0fcf5823",
+      "build/sysbox-module-locks/sysbox-mgr/go.mod": "92c664cc51cdd651660ee29a5ab28b1927dc87586eeeef1b4a1d470993881916",
+      "build/sysbox-module-locks/sysbox-mgr/go.sum": "b949bc093c0b6b8434b22f40d5d0c87c5e10d6492d256f0ba74af9e134f7de9e",
+      "build/sysbox-module-locks/sysbox-runc/go.mod": "8bb3f9b42efe4cea296205dacfceb21e539ec8aa56887ab9ea412a959ee7dec0",
+      "build/sysbox-module-locks/sysbox-runc/go.sum": "ef8c75080bf9375e7ef0ee56fa4903acd03f36d537fa78df29c9949863016fee",
+      "build/sysfs_runtime.py": "53e0ef45d83118c5279eaacde10d31f2679f5fa9222f4675dd1e2aea69c5d0b6",
+      "build/ubuntu_sources.py": "774eae26f56ce45d3f5041f26921fae8908b66567dbf3955df533030ce4bdcf4",
+      "build/validation_image.py": "3ca3b3ed209a1ef78ab8ba19a146dee402c22f355470aa77fd904502c6f87f10",
+      "build/validation_packages.py": "5aff58fcb6b93c5f661057133a9981bd9e9a24812bbba9ba821c9577d55e39ca",
+      "scripts/build.py": "74b44586c147d8c1db0793871d564673c5934ea232acc15cf716b312a1cfcd8d",
+      "scripts/build_validation_image.py": "74921c8db1afdfd86ad9631caf78f2acdd398cfc830a04f2084f51f59831660e",
+      "scripts/disk_artifacts.py": "57c6d598921626e62b1e1ff2633cff288b28e431ee1ed7902d9bbe67a36a8f31",
+      "scripts/oracle_disk.py": "256c9f71d881fa730187094ca86fc5c0b67bfc7538af786cc0990b886052828e",
+      "scripts/proc_transfer_operator.py": "1b2158a80e2418586d9bac63a2ce16659319953ebcb50469e705fb66b02892ed",
+      "scripts/publish.py": "0d83ed09cf46c09d10c6aed4ce01de193fb645d2042080803c92d79e1a317570",
+      "scripts/update_proc_transfer.py": "49d06fd2c3be21119d15bcf9c9e4a1f2b7f0ec2b2827e388317b51b6f94f1486",
+      "supervisor/go.mod": "a1aedd6f5da911df26db3694f8dde18e539df23b89f40cac3aad84518e580372",
+      "supervisor/main.go": "0f560d8d8cec4b2985e6d1fac745dbcc1e0e4a893b38c3969df483ca86dba0db",
+      "supervisor/main_test.go": "e53878ecf0d89591fee39e09a651cc3a64f969a2f918aceafed9f17b91c3150f",
+      "versions.lock.json": "838fbe4dcc22aa39ed3eecedb52a8f4f45dbe2bac068578e32f437ea564d7b9a"
+    }
+  },
+  "configuration": {
+    "status": "PASS",
+    "method": "configuration reset on existing Talos1.14.5 installation; not fresh OS install",
+    "active_resource": "MachineConfig/v1alpha1",
+    "persistent_configuration_verified": true,
+    "spike_document_removed": true,
+    "merged_cri_before_registration_has_no_sysbox": true,
+    "userns_before_registration": 0,
+    "registration_document": "CRICustomizationConfig/sysbox",
+    "userns_after_registration": 11255,
+    "unrelated_cri_config_preserved": true,
+    "workloadIsolation": true,
+    "security_profile_unchanged": true,
+    "unrelated_machine_configuration_preserved": true,
+    "runtime_patch_sha256": "42665a06a50ae615bb9826672b477b4acba604757b3dd9de8cd2d1599b4339dc",
+    "generated_patch_sha256": "9dd909dd2777292a2960bf7a08bf96e0bc55e3eefc91a31a8ec7bdf6f0e9af82",
+    "validation_scope": "configuration only; production runtime results are recorded separately"
+  },
+  "namespaces": {
+    "status": "PASS",
+    "reference": "CRI",
+    "mgr_fs_cri_same_pid_namespace": true,
+    "cri_pid_namespace_differs_from_initial_host": true,
+    "initial_user_namespace_preserved": true,
+    "dynamic_per_boot_identities": true
+  },
+  "proc_result": {
+    "path": "issue-19-native-proc.json",
+    "sha256": "939bd425a9a5ddab89cb8536d11bf421f9dc6af845a93c9c2ff75b85fd2e05b3"
+  },
+  "runtime": {
+    "build_profile": "proc-sysfs-fuse-v1",
+    "environment": "real-talos",
+    "talos": "1.14.5",
+    "sysbox": "0.7.1",
+    "kernel": "6.18.58-talos",
+    "architecture": "amd64",
+    "runtime_binary_sha256": {
+      "proc-mount-helper": "aad580cb7080f67db017d5313e057f0f25d6ff3774d6ad8e6b15eaac382bcec6",
+      "sysbox-fs": "38184075e5570b7a8f5cbee2380efd8a3fb96984792fa10dd1642987c9c60ec4",
+      "sysbox-mgr": "11a2c955be3fdb0a31a6ef9a57f0117b60583591e1fc96b3c706dace354bf6dc",
+      "sysbox-runc": "45f4b34e59c92d2127850f8198ab5c90bc46a74b8dd5dd329cda475ca8fa8040",
+      "sysfs-mount-helper": "adeac7d2ac71f662e3895b8d13149939cdbd265dad0ebe525c027d9f6b9232d9"
+    },
+    "supervisor_sha256": "0838dbd55055c6b13fa81a0c47ffbf43268aa32f093c0e50452efe83d1901035",
+    "checks": {
+      "direct_rootful_docker": true,
+      "docker_mapped_root_and_production_seccomp": true,
+      "privileged_child": true,
+      "nonoverlapping_kind_networks": true,
+      "kind_ready": true,
+      "helm_rollout": true,
+      "service_dns_tcp": true,
+      "upstream_dns": true,
+      "recreated_id_and_child": true,
+      "ordinary_runtime_healthy": true
+    },
+    "cleanup": "passed",
+    "passed": true,
+    "source_inputs_sha256": {
+      "LICENSE": "b83e1b694a457f45d5e37488b96d33cc472b3a5885c6151573c5b7ea1666e349",
+      "build/Dockerfile": "36018d9fd2f3a886af15538ecf9aca5858e0c4f0ed19c4ba9335c52e9f21196a",
+      "build/apt_retry.sh": "90b48a9d57e953526c4f93248c35a3a9296fb21292a43b1dabbe0bc52348e136",
+      "build/assemble.py": "2bafeecdbe4e1119b4f1d7ceeab18fc0e9be53a3c112280b08e0e092c7330d49",
+      "build/official-sources.lock.json": "9e259af9a94442de5dbef6d8f04a4d834b028d0d86d80f4e3f6a174360f97ba5",
+      "build/official_sources.py": "70e234c5db6f0f4023c45088fbac288b4ed1b9ce2047349d9b71e119bb510f8d",
+      "build/oracle/Dockerfile": "1ac147029b9a804de270696f9dc1fb28850da3cc47626e9b6d31e5679bde2cf3",
+      "build/oracle/inspect.py": "18c78c19de4160b4de7aa83c3d66c7e73a470f1d9a9bdf0f5e10a78e3d572c46",
+      "build/probe_idle.py": "b735da8f49d8c0094cc4959f2ab7c4b30e5279b7cdd71af182182eed23f8b4a5",
+      "build/proc-transfer.lock.json": "b8c51d0956a8ccfa1e56f53b571c245f41619c0d9172aa8c3cea0d1f30f830e1",
+      "build/proc_transfer.py": "0f75b5d1ae1114f782d93ab4189ed7c8f9d6b04b0fa6b8ae972b4da2f17485a6",
+      "build/runtime_exec.py": "7b1cd48200d79bf8e72462df1976b952481029b60b95c188d81cb9fba766821e",
+      "build/runtime_launcher.py": "3b6af6ed49e5e1f0200d53efcf560995f6de3a1548f66101e241ab3b174117d9",
+      "build/sysbox-module-locks/sysbox-fs/go.mod": "0614abe79ba97d8c00e42759dbd2a9acd6b903f48d2c03649767886a4d9399a2",
+      "build/sysbox-module-locks/sysbox-fs/go.sum": "49717422ca86177ea50a702f4c902e7baaaae7868f72cf37dc6562ae0fcf5823",
+      "build/sysbox-module-locks/sysbox-mgr/go.mod": "92c664cc51cdd651660ee29a5ab28b1927dc87586eeeef1b4a1d470993881916",
+      "build/sysbox-module-locks/sysbox-mgr/go.sum": "b949bc093c0b6b8434b22f40d5d0c87c5e10d6492d256f0ba74af9e134f7de9e",
+      "build/sysbox-module-locks/sysbox-runc/go.mod": "8bb3f9b42efe4cea296205dacfceb21e539ec8aa56887ab9ea412a959ee7dec0",
+      "build/sysbox-module-locks/sysbox-runc/go.sum": "ef8c75080bf9375e7ef0ee56fa4903acd03f36d537fa78df29c9949863016fee",
+      "build/sysfs_runtime.py": "53e0ef45d83118c5279eaacde10d31f2679f5fa9222f4675dd1e2aea69c5d0b6",
+      "build/ubuntu_sources.py": "774eae26f56ce45d3f5041f26921fae8908b66567dbf3955df533030ce4bdcf4",
+      "build/validation_image.py": "3ca3b3ed209a1ef78ab8ba19a146dee402c22f355470aa77fd904502c6f87f10",
+      "build/validation_packages.py": "5aff58fcb6b93c5f661057133a9981bd9e9a24812bbba9ba821c9577d55e39ca",
+      "scripts/build.py": "74b44586c147d8c1db0793871d564673c5934ea232acc15cf716b312a1cfcd8d",
+      "scripts/build_validation_image.py": "74921c8db1afdfd86ad9631caf78f2acdd398cfc830a04f2084f51f59831660e",
+      "scripts/disk_artifacts.py": "57c6d598921626e62b1e1ff2633cff288b28e431ee1ed7902d9bbe67a36a8f31",
+      "scripts/oracle_disk.py": "256c9f71d881fa730187094ca86fc5c0b67bfc7538af786cc0990b886052828e",
+      "scripts/proc_transfer_operator.py": "1b2158a80e2418586d9bac63a2ce16659319953ebcb50469e705fb66b02892ed",
+      "scripts/publish.py": "0d83ed09cf46c09d10c6aed4ce01de193fb645d2042080803c92d79e1a317570",
+      "scripts/update_proc_transfer.py": "49d06fd2c3be21119d15bcf9c9e4a1f2b7f0ec2b2827e388317b51b6f94f1486",
+      "supervisor/go.mod": "a1aedd6f5da911df26db3694f8dde18e539df23b89f40cac3aad84518e580372",
+      "supervisor/main.go": "0f560d8d8cec4b2985e6d1fac745dbcc1e0e4a893b38c3969df483ca86dba0db",
+      "supervisor/main_test.go": "e53878ecf0d89591fee39e09a651cc3a64f969a2f918aceafed9f17b91c3150f",
+      "versions.lock.json": "838fbe4dcc22aa39ed3eecedb52a8f4f45dbe2bac068578e32f437ea564d7b9a"
+    },
+    "validation_clients": {
+      "architecture": "amd64",
+      "sha256": {
+        "kubectl": "65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8",
+        "talosctl": "ff432b68986709e6b69c563a08a2ced4232d5196b0dccd6d2e783e9d714d7d7d"
+      }
+    },
+    "outer_kubelet_version": "v1.37.1",
+    "validation_script_sha256": "82bb151eb5d0508761ecaa6a1a6e98b8bd8347ca09ed035edf8fd5d9aef4b218",
+    "inner_networking": {
+      "apiServerAddress": "127.0.0.1",
+      "ipFamily": "ipv4",
+      "podSubnet": "10.200.0.0/16",
+      "serviceSubnet": "10.201.0.0/16"
+    },
+    "docker": {
+      "ServerVersion": "27.5.1",
+      "Driver": "overlay2",
+      "CgroupDriver": "cgroupfs",
+      "CgroupVersion": "2",
+      "Architecture": "x86_64"
+    }
+  },
+  "recovery": {
+    "pre_restart_sysboxfs_empty": true,
+    "services": {
+      "ext-sysbox-mgr": {
+        "restart_exit": 0
+      },
+      "ext-sysbox-fs": {
+        "restart_exit": 0
+      }
+    }
+  },
+  "cleanup": {
+    "owned_probe_namespace_deleted": true,
+    "owned_runtime_namespace_deleted": true,
+    "owned_runtimeclass_deleted_after_uid_label_and_unused_checks": true,
+    "sysboxfs_empty_before_service_restarts": true,
+    "sysboxfs_empty_after_runtime_cleanup": true,
+    "services": {
+      "mgr": "Running",
+      "fs": "Running",
+      "talos_health_probe": "not configured; ? is not OK"
+    },
+    "retained": "installed candidate, final SysctlConfig and CRICustomizationConfig; local imported validation images; no global prune"
+  },
+  "source_offering": {
+    "status": "PASS",
+    "verified_source_and_project_files": 1692,
+    "probe_source_files": 335,
+    "source_archive_bytes": 1845652175
+  },
+  "offline_release_assets": {
+    "status": "PASS",
+    "architecture": "amd64",
+    "image_archives": 4,
+    "assets": {
+      "sources.tar.gz": 1845652175,
+      "build-metadata.json": 912085,
+      "extension.tar": 180521472,
+      "standard-image.tar": 180439040,
+      "vmware-image.tar": 189306880,
+      "probe-image.tar": 1293229056
+    }
+  },
+  "earlier_attempt": {
+    "passed": false,
+    "stage": "kind tool HTTPS download; Docker and privileged child had passed",
+    "reason": "validation container Python default CA paths absent; existing /etc/ssl/certs/ca-certificates.crt contains 150 trusted CAs",
+    "correction": "SSL_CERT_FILE points to that existing system bundle in task container; TLS certificate/hostname verification retained",
+    "namespace_cleanup": "passed"
+  },
+  "not_run": {
+    "native_arm64_runtime": "UNRUN",
+    "oci": "NOT_RUN",
+    "vmware_installer_boot_and_agent": "UNRUN",
+    "talos_in_docker": "UNRUN",
+    "production_existing_node_upgrade_rollback": "UNRUN",
+    "public_release_publication_and_anonymous_pull": "UNRUN",
+    "separate_proc_sysfs_fixtures": {
+      "complete_policy_dentry": "Requires disposable container with masks, RO paths and nested protection before registration",
+      "failure_helper_injection": "Requires separately approved disposable daemon; installed consumer is never reconfigured",
+      "outer_mapped_root_write_policy": "Requires separately registered disposable mapped-root container"
+    }
+  },
+  "reproduction": {
+    "build": "python3 scripts/build.py --arch amd64 --with-probe --version 0.7.0 --registry-prefix ghcr.io/OWNER --output .build",
+    "configuration": "README.md Runtime registration: capture rendered CRI TOML, runtime_patch.py --existing-cri-config ... --no-existing-customization, apply generated patch",
+    "probe": "docs/proc-transfer.md local archive import and launcher workflow",
+    "functional": "test/e2e/scripts/validate_runtime.py with explicit private kubeconfig/context, expected node, production metadata and locked clients",
+    "validation_environment": "bounded disposable container; existing system CA bundle selected via SSL_CERT_FILE; no host dependency installation"
+  }
+}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// The extension-service PID namespace cannot supply node PID identities to
-// Sysbox. Launch only our owned backends through the system containerd socket.
+// Run our owned backends in CRI's PID context, where sysbox-runc's PID values
+// originate. Talos workload isolation separates this from the initial host.
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 )
 
 const namespace = "talos-sysbox"
-const socket = "/system/run/containerd/containerd.sock"
+const socket = "/run/containerd/containerd.sock"
 
 type supervisor struct {
 	daemon         string
@@ -96,7 +96,7 @@ func (s supervisor) run(ctx context.Context) error {
 	startup, cancel := context.WithTimeout(ctx, s.startupTimeout)
 	defer cancel()
 	if err := waitSocket(startup, socket); err != nil {
-		return fmt.Errorf("system containerd unavailable: %w", err)
+		return fmt.Errorf("CRI containerd unavailable: %w", err)
 	}
 	if err := s.cleanup(startup); err != nil {
 		return err

@@ -32,7 +32,7 @@ func TestBackendScope(t *testing.T) {
 	for _, daemon := range []string{"sysbox-mgr", "sysbox-fs"} {
 		s := supervisor{daemon: daemon}
 		args := strings.Join(s.runArgs(), " ")
-		for _, required := range []string{"--namespace=talos-sysbox", "--address=/system/run/containerd/containerd.sock", "--with-ns=pid:/proc/1/ns/pid", "--rootfs-propagation=shared", "options=rbind:rshared:rw", "/usr/local/lib/containers/" + daemon} {
+		for _, required := range []string{"--namespace=talos-sysbox", "--address=/run/containerd/containerd.sock", "--with-ns=pid:/proc/1/ns/pid", "--rootfs-propagation=shared", "options=rbind:rshared:rw", "/usr/local/lib/containers/" + daemon} {
 			if !strings.Contains(args, required) {
 				t.Errorf("missing %s", required)
 			}

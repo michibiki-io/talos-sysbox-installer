@@ -1,47 +1,47 @@
 {
-  "talos": "1.12.6",
-  "kernel": "6.18.18",
-  "base_installer": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:9c8b9888993b30c3547879fdcee138fa9a25503b41ec2fdc5ae3671946f1b5a3",
+  "talos": "1.14.5",
+  "kernel": "6.18.58",
+  "base_installer": "ghcr.io/siderolabs/installer-base:v1.14.5@sha256:e67128398bd33a640974f8cf6f8b68e4357bbf0cf92a4ee27e606b088b7c2b54",
   "extensions": {
-    "iscsi-tools": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
-    "util-linux-tools": "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb",
-    "vmtoolsd-guest-agent": "ghcr.io/siderolabs/vmtoolsd-guest-agent:v1.5.0@sha256:fa82f581be4f277252b222b84e112dad4eea97eccf974808179d6c501c14fd46"
+    "iscsi-tools": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:584e1d106e424d3e17ddd43bddf892b386748f10d11a9fd024a358f0d42c0a2e",
+    "util-linux-tools": "ghcr.io/siderolabs/util-linux-tools:2.42.2@sha256:f93f23e96b28e00228cf9a006a15c1648bd5975be989adb1bee6c05c046001a1",
+    "vmtoolsd-guest-agent": "ghcr.io/siderolabs/vmtoolsd-guest-agent:v1.5.1@sha256:289f419e0b4b44debc7ab9a257c1379a691da55d2ce68f6269ab7667058408e8"
   },
   "frameworks": {
     "talos": {
-      "ref": "v1.12.6",
-      "url": "https://codeload.github.com/siderolabs/talos/tar.gz/v1.12.6",
-      "sha256": "bfae01fe1db88cadde1502c552f5bae673524f4dc3512fd99e001c85a86b4515"
+      "ref": "v1.14.5",
+      "url": "https://codeload.github.com/siderolabs/talos/tar.gz/v1.14.5",
+      "sha256": "cb44b8cfcb73d300f8d50d94f075d68cb072a8ebff6d4d4b6ef5c4355a57dfc0"
     },
     "pkgs": {
-      "ref": "a92bed5bdd0a3f14312218dd63d6822e38e6dedd",
-      "url": "https://codeload.github.com/siderolabs/pkgs/tar.gz/a92bed5bdd0a3f14312218dd63d6822e38e6dedd",
-      "sha256": "a98a7075612e4eaa223e6ef4cb2188f29d239d835493a700d7e45178d18e1b8d"
-    },
-    "extensions": {
-      "ref": "be77f3ccc6fd98ae776b488e3887367fe9d2b484",
-      "url": "https://codeload.github.com/siderolabs/extensions/tar.gz/be77f3ccc6fd98ae776b488e3887367fe9d2b484",
-      "sha256": "a4f82b53f14e33ca42567c88812fc3de0c98e92b1c8e1a70e13fb6de805b02bd"
+      "ref": "f4bda77bb9f8202cac8443a7284ce1c7aa129f38",
+      "url": "https://codeload.github.com/siderolabs/pkgs/tar.gz/f4bda77bb9f8202cac8443a7284ce1c7aa129f38",
+      "sha256": "0d042194b8b6227b4988f19c22a057fc3ad92b2c003c24edc044ed0d06de7443"
     },
     "tools": {
-      "ref": "57916cb3ee3e29555dc1b689807e16a8a5600b7e",
-      "url": "https://codeload.github.com/siderolabs/tools/tar.gz/57916cb3ee3e29555dc1b689807e16a8a5600b7e",
-      "sha256": "20d45fd9a0fdc3606b662aa8da5e368aa056c4ffea9ec1ef9cd6fad7d876eab3"
-    },
-    "toolchain": {
-      "ref": "5417b27dcde59aa1ab14c1fba1d440402dafcfe9",
-      "url": "https://codeload.github.com/siderolabs/toolchain/tar.gz/5417b27dcde59aa1ab14c1fba1d440402dafcfe9",
-      "sha256": "309b99c0a2bdbb7f6a92bab41d904389a021adb7d64391fa7a97626ce5f4e068"
+      "ref": "8dad45ecea6483e25a3b680ed710e6cfa98c4534",
+      "url": "https://codeload.github.com/siderolabs/tools/tar.gz/8dad45ecea6483e25a3b680ed710e6cfa98c4534",
+      "sha256": "821eb535477e14c47338750ced3c466e8500ca50d0d886fd6aa1b1515c5babe7"
     },
     "talos-vmtoolsd": {
-      "ref": "v1.5.0",
-      "url": "https://codeload.github.com/siderolabs/talos-vmtoolsd/tar.gz/v1.5.0",
-      "sha256": "0dffecec32d666b8c37bd96430d23a99997fea995e394b06d9465650a7ec16bf"
+      "ref": "v1.5.1",
+      "url": "https://codeload.github.com/siderolabs/talos-vmtoolsd/tar.gz/v1.5.1",
+      "sha256": "8a3315a0fe94195969987e2610642054acc5ef052a0f382af38f73757f963e89"
+    },
+    "extensions": {
+      "ref": "8f25a2088a44a8bbb66b3a3d1f1233a13157f8f7",
+      "url": "https://codeload.github.com/siderolabs/extensions/tar.gz/8f25a2088a44a8bbb66b3a3d1f1233a13157f8f7",
+      "sha256": "80a81f53eee897e96c010d37aadc773bfc539a640a78a226e6585fb416da9752"
+    },
+    "toolchain": {
+      "ref": "db58332f26bd9e4ee0f576f4a777dd1c6eac7350",
+      "url": "https://codeload.github.com/siderolabs/toolchain/tar.gz/db58332f26bd9e4ee0f576f4a777dd1c6eac7350",
+      "sha256": "9d59f6bc91deb441b7d62326cd45ccdd65b997aaba5064afaaa7c9d4aa5cb401"
     }
   },
   "sbom": {
-    "url": "https://github.com/siderolabs/talos/releases/download/v1.12.6/talos-amd64.spdx.json",
-    "sha256": "a701af16f4d8b6643916a618bc087c281de8d275b5b46a29dfc7872467c48576"
+    "url": "https://github.com/siderolabs/talos/releases/download/v1.14.5/talos-amd64.spdx.json",
+    "sha256": "9325668ac7be7661b987e949393d1eaa76f455556bd62cb4834506eb5aa0fc65"
   },
   "native_sources": [
     {
@@ -53,20 +53,20 @@
     {
       "component": "pkgs/cni",
       "file": "cni-plugins.tar.gz",
-      "url": "https://github.com/containernetworking/plugins/archive/refs/tags/v1.9.0.tar.gz",
-      "sha256": "5091841a4f379ab6159152b546efc4523d55694c8adc4f19cc7c68f9d1db6d75"
+      "url": "https://github.com/containernetworking/plugins/archive/refs/tags/v1.9.1.tar.gz",
+      "sha256": "34bd82d47e981940751619c9cc44c095bb90bfcaf8d71865cbb822c37690a764"
     },
     {
       "component": "pkgs/containerd",
       "file": "containerd.tar.gz",
-      "url": "https://github.com/containerd/containerd/archive/refs/tags/v2.1.6.tar.gz",
-      "sha256": "9b13537e5d61b9cf301295a807751447cc7c86fd79bb37ac5630455013d353a5"
+      "url": "https://github.com/containerd/containerd/archive/refs/tags/v2.3.7.tar.gz",
+      "sha256": "5d973b7d239de0e4cb72f6d4bad348a1540a80f394beb03f84a868714b06706c"
     },
     {
       "component": "pkgs/cryptsetup",
       "file": "cryptsetup.tar.gz",
-      "url": "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.8/cryptsetup-2.8.1.tar.gz",
-      "sha256": "bfe5601fd4950bd8456c7b260578e0699dea9e6ddee5cad686531f9aa3ed6ffa"
+      "url": "https://www.kernel.org/pub/linux/utils/cryptsetup/v2.8/cryptsetup-2.8.7.tar.gz",
+      "sha256": "a06d2418182e6c86695e75b9df48bc74a56ff24ec7dcbe8ab93c753e2d47b20d"
     },
     {
       "component": "pkgs/dosfstools",
@@ -77,44 +77,44 @@
     {
       "component": "pkgs/e2fsprogs",
       "file": "e2fsprogs.tar.gz",
-      "url": "https://github.com/tytso/e2fsprogs/archive/refs/tags/v1.47.3.tar.gz",
-      "sha256": "9286ee5471a8a5339a61eb952739e4614a5b1dbed79ca73a78f014885ce2ad53"
+      "url": "https://github.com/tytso/e2fsprogs/archive/refs/tags/v1.47.4.tar.gz",
+      "sha256": "9f82eaa7002673291629077b80ee005cadfcd49854907a22007fed70b0ef596e"
     },
     {
       "component": "pkgs/flannel-cni",
       "file": "flannel-cni.tar.gz",
-      "url": "https://github.com/flannel-io/cni-plugin/archive/refs/tags/v1.8.0-flannel2.tar.gz",
-      "sha256": "6b4615542a50ba21c05d9fb0d346263904b0d37978e3f1673a4b9a890250d108"
+      "url": "https://github.com/flannel-io/cni-plugin/archive/refs/tags/v1.9.1-flannel3.tar.gz",
+      "sha256": "23ed19c545ab63eabf899e70abd8a4ae161cf6a2700926259c6b59381d9df171"
     },
     {
       "component": "pkgs/iptables",
       "file": "iptables.tar.xz",
-      "url": "https://www.netfilter.org/projects/iptables/files/iptables-1.8.11.tar.xz",
-      "sha256": "d87303d55ef8c92bcad4dd3f978b26d272013642b029425775f5bad1009fe7b2"
+      "url": "https://www.netfilter.org/projects/iptables/files/iptables-1.8.13.tar.xz",
+      "sha256": "1afcd33da9e8f913ace6a2126788162e207e26f5d5e29c6573c0e581ffc58b99"
     },
     {
       "component": "pkgs/kernel/prepare",
       "file": "linux.tar.xz",
-      "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.18.tar.xz",
-      "sha256": "f4855f382c1b735c84072bdef36db5bcd5dc7b0c37e42f5104317149a0a486ef"
+      "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.58.tar.xz",
+      "sha256": "069b19f9032c4dac8149ae4b6520c35debca0f42a9f6d52ee55ba6ca9b818013"
     },
     {
       "component": "pkgs/kernel/prepare",
       "file": "kspp.tar.gz",
-      "url": "https://github.com/a13xp0p0v/kernel-hardening-checker/archive/e354f6ab5279f9cfa8bfdd7e13e454ccf69209f9.tar.gz",
-      "sha256": "640b25473f86557d082f680b0f57653a69f4146e97825673bf582f9a4c8b7739"
+      "url": "https://github.com/a13xp0p0v/kernel-hardening-checker/archive/1315e5b97c07fed42ea00f6f9602553c0609a615.tar.gz",
+      "sha256": "0dc61ebf01f0dd1d0d2204432235fb2470bcf2ec020172c30a9d1c14f103f032"
     },
     {
       "component": "pkgs/libaio",
       "file": "libaio.tar.gz",
-      "url": "https://deb.debian.org/debian/pool/main/liba/libaio/libaio_0.3.113.orig.tar.gz",
+      "url": "http://deb.debian.org/debian/pool/main/liba/libaio/libaio_0.3.113.orig.tar.gz",
       "sha256": "2c44d1c5fd0d43752287c9ae1eb9c023f04ef848ea8d4aafa46e9aedb678200b"
     },
     {
       "component": "pkgs/libattr",
       "file": "attr.tar.xz",
-      "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/attr/attr_2.5.2.orig.tar.xz",
-      "sha256": "f2e97b0ab7ce293681ab701915766190d607a1dba7fae8a718138150b700a70b"
+      "url": "http://archive.ubuntu.com/ubuntu/pool/main/a/attr/attr_2.6.0.orig.tar.xz",
+      "sha256": "6c8a2148a7b85043b68492bce43316b0e2e214fc4e628c7ede078e76e216330b"
     },
     {
       "component": "pkgs/libinih",
@@ -125,14 +125,14 @@
     {
       "component": "pkgs/libjansson",
       "file": "jansson.tar.bz2",
-      "url": "https://github.com/akheron/jansson/releases/download/v2.14.1/jansson-2.14.1.tar.bz2",
-      "sha256": "6bd82d3043dadbcd58daaf903d974891128d22aab7dada5d399cb39094af49ce"
+      "url": "https://github.com/akheron/jansson/releases/download/v2.15.1/jansson-2.15.1.tar.bz2",
+      "sha256": "f9aa4b3ec8496fee69db94f06f3d76fd4a26b012ee9bf1e917078c2cd2841881"
     },
     {
       "component": "pkgs/libjson-c",
       "file": "json-c.tar.gz",
-      "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz",
-      "sha256": "876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724"
+      "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19.tar.gz",
+      "sha256": "37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de"
     },
     {
       "component": "pkgs/libmnl",
@@ -143,50 +143,50 @@
     {
       "component": "pkgs/libnftnl",
       "file": "libnftnl.tar.bz2",
-      "url": "https://netfilter.org/projects/libnftnl/files/libnftnl-1.3.0.tar.xz",
-      "sha256": "0f4be47a8bb8b77a350ee58cbd4b5fae6260ad486a527706ab15cfe1dd55a3c4"
+      "url": "https://netfilter.org/projects/libnftnl/files/libnftnl-1.3.1.tar.xz",
+      "sha256": "607da28dba66fbdeccf8ef1395dded9077e8d19f2995f9a4d45a9c2f0bcffba8"
     },
     {
       "component": "pkgs/libpopt",
       "file": "popt.tar.gz",
-      "url": "https://ftp.osuosl.org/pub/rpm/popt/releases/popt-1.x/popt-1.19.tar.gz",
+      "url": "http://ftp.rpm.org/popt/releases/popt-1.x/popt-1.19.tar.gz",
       "sha256": "c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9"
     },
     {
       "component": "pkgs/liburcu",
       "file": "liburcu.tar.bz2",
-      "url": "https://lttng.org/files/urcu/userspace-rcu-0.15.5.tar.bz2",
-      "sha256": "b2f787a8a83512c32599e71cdabcc5131464947b82014896bd11413b2d782de1"
+      "url": "https://lttng.org/files/urcu/userspace-rcu-0.15.6.tar.bz2",
+      "sha256": "850b192096eb11ebf2c70e8f97bc7da7479ee41da1bebeb44e3986908bac414f"
     },
     {
       "component": "pkgs/lvm2",
       "file": "lvm2.tar.gz",
-      "url": "https://mirrors.kernel.org/sourceware/lvm2/LVM2.2.03.37.tgz",
-      "sha256": "b02656cc39a2f86a702c432dab0d0317e12111fca9d623a18f1b9c3f87b88200"
+      "url": "https://mirrors.kernel.org/sourceware/lvm2/LVM2.2.03.42.tgz",
+      "sha256": "352703ef5b72ebb22d4f250284a29b89fe64d4049c6bf64c693f9af486c8081e"
     },
     {
       "component": "pkgs/nftables",
       "file": "nftables.tar.xz",
-      "url": "https://netfilter.org/projects/nftables/files/nftables-1.1.5.tar.xz",
-      "sha256": "1daf10f322e14fd90a017538aaf2c034d7cc1eb1cc418ded47445d714ea168d4"
+      "url": "https://netfilter.org/projects/nftables/files/nftables-1.1.6.tar.xz",
+      "sha256": "372931bda8556b310636a2f9020adc710f9bab66f47efe0ce90bff800ac2530c"
     },
     {
       "component": "pkgs/runc",
       "file": "runc.tar.xz",
-      "url": "https://github.com/opencontainers/runc/releases/download/v1.3.5/runc.tar.xz",
-      "sha256": "ddb8745a51e572cf24e874589f0c5a3cac4853a4e06381f0e72ff6ee417f3d02"
+      "url": "https://github.com/opencontainers/runc/releases/download/v1.5.2/runc-1.5.2.tar.xz",
+      "sha256": "46eba094e45fc37d96a1b1dc150971fe8d076d6e23bae09dd35443141bed31a1"
     },
     {
       "component": "pkgs/systemd",
       "file": "systemd.tar.gz",
-      "url": "https://github.com/systemd/systemd/archive/refs/tags/v257.9.tar.gz",
-      "sha256": "b27dcc100a738b4b5b81f7c5174c1239a6495f5bdf3d3caa94a17b8373e6a1ca"
+      "url": "https://github.com/systemd/systemd/archive/refs/tags/v261.2.tar.gz",
+      "sha256": "ed1059ff964f5df35b6056434cc17cc83f86dc913f10489948a0b19b6081c5ec"
     },
     {
       "component": "pkgs/xfsprogs",
       "file": "xfsprogs.tar.xz",
-      "url": "https://mirrors.edge.kernel.org/pub/linux/utils/fs/xfs/xfsprogs/xfsprogs-6.17.0.tar.xz",
-      "sha256": "5b0f56a81f641326266f762ae8a563b29d95cdbcda83bc7938f68ce122f1edd9"
+      "url": "https://mirrors.edge.kernel.org/pub/linux/utils/fs/xfs/xfsprogs/xfsprogs-7.1.1.tar.xz",
+      "sha256": "063edc31ba8e85c95c7faf9be465a04898bba7c6e622fdd9b146eed4ca5415e8"
     },
     {
       "component": "pkgs/libseccomp",
@@ -197,44 +197,44 @@
     {
       "component": "pkgs/grub",
       "file": "grub.tar.xz",
-      "url": "https://ftp.gnu.org/gnu/grub/grub-2.12.tar.xz",
-      "sha256": "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa"
+      "url": "https://mirrors.kernel.org/gnu/grub/grub-2.14.tar.xz",
+      "sha256": "bc8d3c73535b8838d8c8e2654d73edc4e6ae8c8acdb45d5df5dc9a1547446d43"
     },
     {
       "component": "pkgs/liblzma",
       "file": "xz.tar.xz",
-      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz",
-      "sha256": "0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e"
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.xz",
+      "sha256": "fff1ffcf2b0da84d308a14de513a1aa23d4e9aa3464d17e64b9714bfdd0bbfb6"
     },
     {
       "component": "tools/tools-libcap",
       "file": "libcap.tar.xz",
-      "url": "https://kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.77.tar.xz",
-      "sha256": "897bc18b44afc26c70e78cead3dbb31e154acc24bee085a5a09079a88dbf6f52"
+      "url": "https://kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz",
+      "sha256": "0d621e562fd932ccf67b9660fb018e468a683d7b827541df27813228c996bb11"
     },
     {
       "component": "tools/tools-util-linux",
       "file": "util-linux.tar.xz",
-      "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.2.tar.xz",
-      "sha256": "6062a1d89b571a61932e6fc0211f36060c4183568b81ee866cf363bce9f6583e"
+      "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.4.tar.xz",
+      "sha256": "fbd62a100ab7bb8746ba0661255c3c48185b1e9021507c624da01fbc696330ec"
     },
     {
       "component": "toolchain/toolchain-musl",
       "file": "musl.tar.gz",
-      "url": "https://www.musl-libc.org/releases/musl-1.2.5.tar.gz",
-      "sha256": "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4"
+      "url": "https://www.musl-libc.org/releases/musl-1.2.6.tar.gz",
+      "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
     },
     {
-      "component": "extensions/storage/iscsi-tools/open-iscsi",
+      "component": "extensions/storage/iscsi-tools",
       "file": "open-iscsi.tar.gz",
-      "url": "https://github.com/open-iscsi/open-iscsi/archive/refs/tags/2.1.11.tar.gz",
-      "sha256": "f288d1823b15782432608e5f53723159562e2c44e9a72b40fe15a5ca064ac86a"
+      "url": "https://github.com/open-iscsi/open-iscsi/archive/refs/tags/2.1.13.tar.gz",
+      "sha256": "1c3a8ad7d86e57d247a08c013f5055ef695b3a07ed760d1aea7d90b9f9011602"
     },
     {
       "component": "extensions/tools/util-linux",
       "file": "util-linux.tar.xz",
-      "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.2.tar.xz",
-      "sha256": "6062a1d89b571a61932e6fc0211f36060c4183568b81ee866cf363bce9f6583e"
+      "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz",
+      "sha256": "03a05d3adf9602ef128f2da05b84b3205ce60c351e5737c0370f74000679ce8a"
     },
     {
       "component": "tools/tools-kmod",
@@ -245,46 +245,88 @@
     {
       "component": "tools/tools-libselinux",
       "file": "libselinux.tar.gz",
-      "url": "https://github.com/SELinuxProject/selinux/releases/download/3.9/libselinux-3.9.tar.gz",
-      "sha256": "e7ee2c01dba64a0c35c9d7c9c0e06209d8186b325b0638a0d83f915cc3c101e8"
+      "url": "https://github.com/SELinuxProject/selinux/releases/download/3.11/libselinux-3.11.tar.gz",
+      "sha256": "73d419c6e20e874adaa4019372cbd097eecf4d276e13f27ec5e67d35c0bd203c"
     },
     {
       "component": "tools/tools-libsepol",
       "file": "libsepol.tar.gz",
-      "url": "https://github.com/SELinuxProject/selinux/releases/download/3.9/libsepol-3.9.tar.gz",
-      "sha256": "ba630b59e50c5fbf9e9dd45eb3734f373cf78d689d8c10c537114c9bd769fa2e"
+      "url": "https://github.com/SELinuxProject/selinux/releases/download/3.11/libsepol-3.11.tar.gz",
+      "sha256": "79f3d2c88f44b7eb5cf54d9792e03232297e17f97a179163f2750099a00f164d"
     },
     {
       "component": "tools/tools-openssl",
       "file": "openssl.tar.gz",
-      "url": "https://www.openssl.org/source/openssl-3.6.1.tar.gz",
-      "sha256": "b1bfedcd5b289ff22aee87c9d600f515767ebf45f77168cb6d64f231f518a82e"
+      "url": "https://www.openssl.org/source/openssl-3.6.5.tar.gz",
+      "sha256": "a2157c2830efdec3788939b00c9b0638306d3f0bbb76dc4832ee503bb397df98"
     },
     {
       "component": "tools/tools-pcre2",
       "file": "pcre.tar.bz2",
-      "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.bz2",
-      "sha256": "47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7"
+      "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.49/pcre2-10.49.tar.bz2",
+      "sha256": "53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384"
+    },
+    {
+      "component": "pkgs/igzip",
+      "file": "isa-l.tar.gz",
+      "url": "https://github.com/intel/isa-l/archive/refs/tags/v2.32.1.tar.gz",
+      "sha256": "d9f7179ab0e14a3db9b610fac22793854a1435e8423ec9ce07f4cbedc5f92f5e"
+    },
+    {
+      "component": "pkgs/pigz",
+      "file": "pigz.tar.gz",
+      "url": "https://zlib.net/pigz/pigz-2.8.tar.gz",
+      "sha256": "eb872b4f0e1f0ebe59c9f7bd8c506c4204893ba6a8492de31df416f0d5170fd0"
+    },
+    {
+      "component": "pkgs/libarchive",
+      "file": "libarchive.tar.xz",
+      "url": "https://github.com/libarchive/libarchive/releases/download/v3.8.9/libarchive-3.8.9.tar.xz",
+      "sha256": "888c934f9d95648ecb9163dc8e23ab80a476ecb81a8f1154704a227b5b676dde"
+    },
+    {
+      "component": "pkgs/libucontext",
+      "file": "libucontext.tar.gz",
+      "url": "https://github.com/kaniini/libucontext/archive/refs/tags/libucontext-1.5.2.tar.gz",
+      "sha256": "9230397327bbf580e04c9456d1509e9af19599c7f6deca7f75969ece6e9d598e"
+    },
+    {
+      "component": "pkgs/mdadm",
+      "file": "mdadm.tar.gz",
+      "url": "https://github.com/md-raid-utilities/mdadm/archive/refs/tags/mdadm-4.6.tar.gz",
+      "sha256": "202a7525e6f2b44395a9ef2c561082c7d6d8204e9addfe3f6268bfb141efc093"
+    },
+    {
+      "component": "tools/tools-zlib-ng",
+      "file": "zlib.tar.gz",
+      "url": "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz",
+      "sha256": "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1"
+    },
+    {
+      "component": "tools/tools-zstd",
+      "file": "zstd.tar.gz",
+      "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz",
+      "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
     },
     {
       "component": "go-standard-library",
-      "file": "go1.25.8.src.tar.gz",
-      "url": "https://go.dev/dl/go1.25.8.src.tar.gz",
-      "sha256": "e988d4a2446ac7fe3f6daa089a58e9936a52a381355adec1c8983230a8d6c59e"
+      "file": "go1.26.10.src.tar.gz",
+      "url": "https://go.dev/dl/go1.26.10.src.tar.gz",
+      "sha256": "fd63e883ba2f2bfca93c1646b31ebef63e2b1e4d2b317c9789d976a68d81f36f"
     }
   ],
   "base_installers": {
-    "amd64": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:9c8b9888993b30c3547879fdcee138fa9a25503b41ec2fdc5ae3671946f1b5a3",
-    "arm64": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:af4d2c80b3f3ec51ff4be1d898132ed8e1d54611618b30b0135fbb2d26abd49a"
+    "amd64": "ghcr.io/siderolabs/installer-base:v1.14.5@sha256:e67128398bd33a640974f8cf6f8b68e4357bbf0cf92a4ee27e606b088b7c2b54",
+    "arm64": "ghcr.io/siderolabs/installer-base:v1.14.5@sha256:7a612581a2c0ed1b1e912a6d0f42aef2515a00258b6e2621944f959aea30bb96"
   },
   "sboms": {
     "amd64": {
-      "url": "https://github.com/siderolabs/talos/releases/download/v1.12.6/talos-amd64.spdx.json",
-      "sha256": "a701af16f4d8b6643916a618bc087c281de8d275b5b46a29dfc7872467c48576"
+      "url": "https://github.com/siderolabs/talos/releases/download/v1.14.5/talos-amd64.spdx.json",
+      "sha256": "9325668ac7be7661b987e949393d1eaa76f455556bd62cb4834506eb5aa0fc65"
     },
     "arm64": {
-      "url": "https://github.com/siderolabs/talos/releases/download/v1.12.6/talos-arm64.spdx.json",
-      "sha256": "a701af16f4d8b6643916a618bc087c281de8d275b5b46a29dfc7872467c48576"
+      "url": "https://github.com/siderolabs/talos/releases/download/v1.14.5/talos-arm64.spdx.json",
+      "sha256": "7a60d3487ea1bd351ec752d04adfd4ba56b939b29d22f90c2cca7d9200d898c3"
     }
   }
 }
