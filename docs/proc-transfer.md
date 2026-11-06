@@ -44,11 +44,11 @@ The updater refuses to overwrite the authoritative lock and compares all four pr
 
 ### Build and activation
 
-The existing digest-pinned Go 1.26.2/Ubuntu builder, signed `20261001T000000Z` APT snapshot, finite retries, read-only Go modules and protobuf generator 1.3.2 remain effective inputs. The upstream's Go 1.27.2/generator 1.3.5 are recorded as upstream metadata, not silently adopted.
+The digest-pinned Go 1.26.10/Ubuntu builder, signed `20261001T000000Z` APT snapshot, finite retries, read-only Go modules and protobuf generator 1.3.2 remain effective inputs. The upstream's Go 1.27.2/generator 1.3.5 are recorded as upstream metadata, not silently adopted.
 
 Standalone runc and mgr compile first from unpatched component sources. Immediately before fs compilation, the integration applies `proc-transfer.patch` followed by `sysfs-transfer.patch` (including local bazil) with `patch --batch --forward --fuzz=0` after a successful dry-run. The nsenter C change is linked into fs only. Both static production helpers compile from the same verified archive. The builder and final extension layer assertions require a matching static triple for the selected amd64/arm64 target, root ownership and mode 0755; checkpoint tools must be absent from the production rootfs. Both installer variants consume this same verified extension OCI layout.
 
-The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`, visible as backend `/proc-mount-helper`. The sysfs helper is installed alongside it at `sysfs-mount-helper`, visible as `/sysfs-mount-helper`. The supervisor sets both `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` and `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` in its actual system-containerd fs invocation. Caller environment variables do not configure the daemon. Existing owned backend supervision, node PID entry, mount propagation and runtime registration remain in place. Install the complete installer in an approved maintenance operation, retaining all other required extensions. No machine-config switch or runtime filter change enables this path.
+The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`, visible as backend `/proc-mount-helper`. The sysfs helper is installed alongside it at `sysfs-mount-helper`, visible as `/sysfs-mount-helper`. The supervisor sets both `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` and `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` in its actual CRI-containerd fs invocation. Caller environment variables do not configure the daemon. Owned backend supervision and mount propagation remain in place; both backends enter the CRI PID namespace and runtime registration uses the supported Talos 1.14 configuration documents. Install the complete installer in an approved maintenance operation, retaining all other required extensions. No machine-config switch or runtime filter change enables this path.
 
 `build-metadata.json` records the integration revision, original archive/file/patch/helper hashes, upstream manifest, effective Go/protoc/generator inputs, build scope and paired binary SHA-256 values. Corresponding sources include original archives, patch, effective module locks, generated protobuf sources, linker maps and build recipes. Helper static-library owners use the existing signed-snapshot source/license collection; MIT helper notices, Apache-2.0 patch notices and the complete bazil BSD terms (`LICENSES/bazil-fuse.txt`) accompany them. Source-before-binary publication, immutable tags, anonymous release pulls and original archive recovery use the existing release mechanism.
 
@@ -209,7 +209,7 @@ upstream manifest の hash を同時に更新しても、いずれかの product
 
 ### ビルドと有効化
 
-既存の digest 固定 Go 1.26.2/Ubuntu builder、署名付き APT snapshot `20261001T000000Z`、有限 retry、read-only Go module、protobuf generator 1.3.2 を使います。
+既存の digest 固定 Go 1.26.10/Ubuntu builder、署名付き APT snapshot `20261001T000000Z`、有限 retry、read-only Go module、protobuf generator 1.3.2 を使います。
 upstream の Go 1.27.2/generator 1.3.5 は metadata として記録し、無断で採用しません。
 
 単体 runc と mgr を未パッチのソースで先にコンパイルします。
@@ -222,7 +222,7 @@ helper の host path は `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`
 sysfs helper も同じ場所の `sysfs-mount-helper` として配置し、backend 内では `/sysfs-mount-helper` になります。
 supervisor が同じ fs backend に `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` と `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` を設定します。
 コンテナ caller の環境変数で daemon を変更することはできません。
-既存の所有 backend の監督、node PID namespace、mount propagation、RuntimeClass の登録を維持します。
+所有 backend の監督と mount propagation を維持します。両 backend は CRI PID namespace に入り、runtime 登録は Talos 1.14 の設定文書を使用します。
 承認された保守操作で、他に必要な extension を含む installer 全体を導入します。
 有効化のための machine-config switch や runtime filter の変更はありません。
 
