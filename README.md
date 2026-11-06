@@ -60,6 +60,7 @@ GNU linker maps identify the actual linked static libraries so their matching so
 The checksum-verified upstream package supplies reference release documentation, not host-derived executables.
 Ubuntu's signed snapshot fixes package resolution; upstream archives have SHA-256 locks. APT operations retry downloads and then the same operation at most three times on failure, without changing the snapshot or disabling signature verification.
 Each operation allows three download retries, 30-second HTTP/HTTPS timeouts, and two 5-second waits between the three operation attempts. Persistent failures still stop the build. The `dependencies` Docker target permits checking snapshot indexes and build dependencies without building the installers.
+Official source URLs follow the pinned upstream recipes, including the HTTP libaio/attr/popt URLs; SHA-256 verification remains mandatory before caching or export. Archive downloads retry only the explicitly classified transient DNS/timeout/reset/HTTP errors, at most three total attempts. Other errors stop the build; an incomplete file may remain in the failed build workspace but cannot enter the verified cache or successful exports. The APT retry policy above is separate.
 Build inputs are in [versions.lock.json](versions.lock.json) for amd64 and [versions.arm64.lock.json](versions.arm64.lock.json) for ARM64.
 The context physically contains only `build/`, `supervisor/`, the lock and the project license.
 It never includes local configs, logs or state.
@@ -254,6 +255,7 @@ Public upstream references: [Sysbox release](https://github.com/nestybox/sysbox/
 英語節のビルドコマンドで、固定した Go と Ubuntu のコンテナ内から static supervisor、shell、rsync、modprobe、iptables、fusermount3 と共有ライブラリを生成します。
 ビルド入力は amd64 用の `versions.lock.json` と ARM64 用の `versions.arm64.lock.json` にあり、署名付き Ubuntu snapshot と上流アーカイブの SHA-256 を検証します。APT はダウンロードを再試行し、失敗時には同じ操作を最大3回試します。snapshot の変更や署名検証の無効化は行いません。
 各操作はダウンロード再試行3回、HTTP／HTTPS timeout 30秒、操作の試行間に5秒の待機2回を設定します。恒久障害時はビルドを停止します。Docker の `dependencies` target で、installer を構築せずに snapshot index とビルド依存を確認できます。
+公式ソースの URL は固定した上流 recipe に合わせ、libaio／attr／popt の HTTP URL もそのまま記録しています。cache と export の前に SHA-256 を必ず検証します。archive 取得の再試行は明示した一時的な DNS／timeout／reset／HTTP エラーだけを対象とし、合計3試行までです。それ以外はビルドを停止し、未完了ファイルが失敗した作業領域に残っても、検証済み cache や成功成果物には入りません。上記の APT 再試行規則とは別です。
 Sysbox の3つの binary は release が固定した component commit、読み取り専用の module 解決と checksum 検証で取得する Go 依存、固定 builder の static C library から再ビルドします。
 GNU linker map で実際に結合された static library を特定し、その対応ソースとライセンスを application source と再ビルド手順と一緒に提供します。
 検証した上流 package はリリース文書の参照に使い、ホスト由来の実行ファイルは使用しません。

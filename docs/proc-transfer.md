@@ -78,6 +78,8 @@ The trusted launcher requires native amd64 or ARM64 matching its probe and artif
 
 The launcher mounts only `/usr/local` and `/run/containerd` from the host, both read-only. It uses `/run/containerd/containerd.sock` for both the probe and owned backends. With Talos 1.14.5 workload isolation enabled, hostPID joins the CRI PID namespace rather than the initial host PID namespace. After checking the initial UID map, the launcher verifies the socket's kernel SO_PEERCRED root UID/GID, pins its live peer with pidfd and requires matching PID/User namespaces. Sysbox mgr/fs and runc must share that CRI PID context. No system-containerd socket or host filesystem change is required. An [independent socket-peer spike](test-evidence/issue-19-cri-peer-spike.json) confirmed root credentials and matching PID/User namespaces on the retained experimental VM; it did not exercise the final Python launcher or pidfd lifecycle cases.
 
+The result field `namespace_context: "cri"` names the reference bound to the verified CRI socket peer; it does not itself measure separation from the initial host PID namespace. That separation is recorded by the independent node-side namespace capture in the native evidence.
+
 For the public route, obtain the completed release's `test-images.lock.json` asset, render it with the same operator command, and create only the namespace, probe and launcher manifests. The renderer uses the exact `image@sha256` reference and `IfNotPresent`; no bootstrap/import is needed. After readiness, transfer that public lock to the launcher and run the same verification/result commands below. If publication or anonymous checks have not succeeded, there is no public lock to use.
 
 The probe security context reproduces UID/GID 1001, `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, capabilities `drop: [ALL]`, and Kubernetes `seccompProfile: Unconfined` for the outer profile only. The Sysbox production filter remains required: the independent process check demands `Seccomp: 2`, `CapEff: 0` and `NoNewPrivs: 1`. No runtime filter is disabled.
@@ -297,6 +299,7 @@ Sysbox mgr/fs と runc も、この CRI PID namespace を共有する必要が�
 system-containerd socket と host filesystem の変更は不要です。
 [独立した socket-peer spike](test-evidence/issue-19-cri-peer-spike.json) では、実験用 VM で root credential と PID/User namespace の一致を確認しました。
 最終 Python launcher と pidfd lifecycle の検査は、この spike の対象外です。
+結果の `namespace_context: "cri"` は、検証した CRI socket peer に結び付いた参照点の名称です。この値だけで初期ホスト PID namespace との分離を実測したとは主張しません。分離の実測は native 証跡の独立した node 側 namespace capture に記録します。
 
 公開経路では、公開完了済み release の `test-images.lock.json` を取得して同じ renderer に渡します。
 namespace、probe、launcher だけを作成し、bootstrap や import は不要です。

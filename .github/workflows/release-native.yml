@@ -126,7 +126,6 @@ jobs:
           path: |
             .build/oracle.partial-*/generator.log
             .build/oracle.partial-*/conversion.log
-            .build/oracle.partial-*/loop.json
             .build/oracle.partial-*/FAILED.txt
             .build/oracle.partial-*/original-imager-output.json
       - uses: actions/upload-artifact@v7

@@ -126,7 +126,12 @@
     "unrelated_machine_configuration_preserved": true,
     "runtime_patch_sha256": "42665a06a50ae615bb9826672b477b4acba604757b3dd9de8cd2d1599b4339dc",
     "generated_patch_sha256": "9dd909dd2777292a2960bf7a08bf96e0bc55e3eefc91a31a8ec7bdf6f0e9af82",
-    "validation_scope": "configuration only; production runtime results are recorded separately"
+    "validation_scope": "configuration only; production runtime results are recorded separately",
+    "review_verification": {
+      "runtime_patch_sha256_matches_current_script": true,
+      "generated_patch_sha256_matches_current_default_documents": true,
+      "method": "Python3.12 container calculated script SHA256 and encode_documents(configuration(\"\",11255)) SHA256; both match original VM evidence. Existing valid fragment is preflight-only and does not change emitted documents."
+    }
   },
   "namespaces": {
     "status": "PASS",
@@ -293,7 +298,7 @@
   },
   "reproduction": {
     "build": "python3 scripts/build.py --arch amd64 --with-probe --version 0.7.0 --registry-prefix ghcr.io/OWNER --output .build",
-    "configuration": "README.md Runtime registration: capture rendered CRI TOML, runtime_patch.py --existing-cri-config ... --no-existing-customization, apply generated patch",
+    "configuration": "README.md Runtime registration: capture rendered CRI TOML; python3 scripts/runtime_patch.py --input-fragment CURRENT.toml --no-existing-customization --output FILE; apply generated patch",
     "probe": "docs/proc-transfer.md local archive import and launcher workflow",
     "functional": "test/e2e/scripts/validate_runtime.py with explicit private kubeconfig/context, expected node, production metadata and locked clients",
     "validation_environment": "bounded disposable container; existing system CA bundle selected via SSL_CERT_FILE; no host dependency installation"

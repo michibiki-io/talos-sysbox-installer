@@ -124,7 +124,6 @@ jobs:
             .build/vmware/inputs.json
             .build/oracle.partial-*/generator.log
             .build/oracle.partial-*/conversion.log
-            .build/oracle.partial-*/loop.json
             .build/oracle.partial-*/FAILED.txt
             .build/oracle.partial-*/original-imager-output.json
             test/e2e/results/*.json

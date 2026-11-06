@@ -30,7 +30,7 @@ Both disk formats have exactly **53,687,091,200 bytes (50 GiB)** virtual capacit
 
 Static inspection checks the actual ARM64 EFI bootloader and UKI, `.linux` as either ARM64 Image or ARM64 EFI zboot PE, and `.initrd` compression by magic (including concatenated zstd frames). All three embedded extension rootfs inventories and manifest metadata must match the exact Standard inputs. Sysbox executable hashes additionally match Standard's build metadata and their ELF machine is ARM64.
 
-The recorded comparison explicitly permits only the observed Talos unpack normalization of the two existing Sysbox private `tmp` directory modes from 1777 to 0777; these differences appear in `mode_differences`. File contents, ordinary permission bits and all other modes must match. This is a static packaging observation, not a runtime validation or an Oracle-specific Sysbox modification.
+The recorded comparison explicitly permits only the observed Talos unpack normalization of the two existing Sysbox private `tmp` directory modes from 1777 to 0777; these differences appear in `mode_differences`. File contents, ordinary permission bits and all other modes must match. This is a static packaging observation, not a runtime validation or an Oracle-specific Sysbox modification. The inspector comment names Talos 1.12.6 as the original observation; the same narrow rule is checked against each new output, including 1.14.5.
 
 The unchanged Standard installer is also exported by immutable configuration/digest solely for inspection. Its ARM64 loader and kernel must match, and all embedded extension contents and modes must match Oracle exactly, including the observed tmp modes. These inspected UKI sections are never used to build the Oracle disk.
 
@@ -129,6 +129,7 @@ Sysbox バイナリは Standard のビルド記録の SHA256 と ARM64 ELF も�
 既存 Sysbox の私有 `tmp` ディレクトリ 2 個について、Talos の展開で mode が 1777 から 0777 になる観測差だけを明示的に許容し、`mode_differences` へ記録します。
 ファイル内容、通常の permission bit、それ以外の mode は一致を要求します。
 これは静的なパッケージングの観測であり、runtime の検証や Oracle 専用の Sysbox 変更ではありません。
+inspector のコメントにある Talos 1.12.6 は最初に観測した版を示します。同じ限定規則を、1.14.5 を含む新しい出力ごとに検査します。
 固定 digest または configuration ID の Standard installer も静的検査のため export し、ARM64 loader と kernel、および埋め込み済み全拡張の内容と mode が Oracle と一致することを要求します。
 検査で読み取った UKI section は、Oracle ディスク生成の入力には使用しません。
 
