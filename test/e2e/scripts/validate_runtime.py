@@ -53,6 +53,8 @@ class Runner:
     def __init__(self, args):
         self.args = args
         self.lock = json.loads(args.lock.read_text())
+        if self.lock['architecture'] not in ('amd64', 'arm64'):
+            raise ValueError('unsupported target architecture')
         self.namespace = 'sysbox-validation-'+uuid.uuid4().hex[:12]
         self.env = dict(os.environ, KUBECONFIG=str(args.kubeconfig.resolve()))
         self.command = ['kubectl','--kubeconfig',str(args.kubeconfig.resolve()),'--context',args.context,'--request-timeout=30s']
@@ -108,7 +110,7 @@ class Runner:
                 raise RuntimeError('test tool checksum mismatch')
             if name=='helm':
                 with tarfile.open(fileobj=io.BytesIO(data)) as tf:
-                    data=tf.extractfile('linux-amd64/helm').read()
+                    data=tf.extractfile('linux-'+self.lock['architecture']+'/helm').read()
             self.upload('/usr/local/bin/'+name,data)
 
     def run(self):
@@ -123,8 +125,8 @@ class Runner:
             raise RuntimeError('expected node not found; refusing mutation')
         node=matches[0]
         info=node['status']['nodeInfo']
-        if info['architecture']!='amd64' or info['osImage']!='Talos (v'+self.lock['talos']+')':
-            raise RuntimeError('target is not locked amd64 Talos')
+        if info['architecture']!=self.lock['architecture'] or info['osImage']!='Talos (v'+self.lock['talos']+')':
+            raise RuntimeError('target is not locked '+self.lock['architecture']+' Talos')
         if self.args.environment=='real-talos' and not info['kernelVersion'].endswith('-talos'):
             raise RuntimeError('real-talos requires an actual Talos kernel')
         if self.args.environment=='real-talos':
@@ -137,7 +139,7 @@ class Runner:
                     raise RuntimeError('installed runtime artifact does not match this build')
         rc=json.loads(self.k(['get','runtimeclass','sysbox-runc','-o','json']))
         if rc['handler']!='sysbox-runc': raise RuntimeError('unexpected RuntimeClass')
-        result={'build_profile': metadata['proc_transfer']['build_profile'], 'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':'amd64','runtime_binary_sha256':metadata['binary_sha256'],'supervisor_sha256':metadata['supervisor_sha256'],'checks':{},'cleanup':'unrun','passed':False}
+        result={'build_profile': metadata['proc_transfer']['build_profile'], 'environment':self.args.environment,'talos':self.lock['talos'],'sysbox':self.lock['sysbox'],'kernel':info['kernelVersion'],'architecture':self.lock['architecture'],'runtime_binary_sha256':metadata['binary_sha256'],'supervisor_sha256':metadata['supervisor_sha256'],'checks':{},'cleanup':'unrun','passed':False}
         created=False
         try:
             ns={'apiVersion':'v1','kind':'Namespace','metadata':{'name':self.namespace,'labels':{'pod-security.kubernetes.io/enforce':'privileged'}}}

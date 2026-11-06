@@ -269,13 +269,13 @@ class BuildTests(unittest.TestCase):
             if failure == 'mismatch': changed['proc_transfer']['output_sha256']['sysfs-mount-helper'] = 'd'*64
             with self.subTest(failure=failure), self.assertRaises(RuntimeError): validation.installed_hashes(changed)
 
-    def probe_inputs(self, root):
-        inputs = self.original_archives(root)
-        image = 'ghcr.io/example/talos-sysbox-proc-transfer-probe:v0.1.0-talos-v1.12.6'
+    def probe_inputs(self, root, arch='amd64'):
+        inputs = self.original_archives(root, arch)
+        image = 'ghcr.io/example/talos-sysbox-proc-transfer-probe:v0.1.0-talos-v1.12.6' + ('-arm64' if arch == 'arm64' else '')
         build.retag_archive(root/'extension.tar', root/'probe-image.tar', image)
         config = build.archive_config_digest(root/'probe-image.tar')
         inputs['probe'] = {'image': image, 'test_image_lock': {'schema_version': 1, 'build_profile': 'proc-sysfs-fuse-v1',
-            'test_images': {'proc_transfer_probe': {'local_tag': image, 'oci_digest': 'sha256:local',
+            'test_images': {'proc_transfer_probe': {'architecture': arch, 'local_tag': image, 'oci_digest': 'sha256:local',
             'config_digest': config, 'anonymous_pull_verified': False, 'distribution': 'local-archive-import-only'}}}}
         inputs['image_config_digests'][image] = config
         inputs['image_archives'][image] = {'file': 'probe-image.tar', 'sha256': build.file_sha256(root/'probe-image.tar')}
@@ -363,13 +363,13 @@ class BuildTests(unittest.TestCase):
         reordered={'inputs':dict(reversed(list(original['inputs'].items()))),'source_files':dict(reversed(list(original['source_files'].items())))}
         self.assertEqual(official.stable_json(original).encode(),official.stable_json(reordered).encode())
         self.assertEqual(json.loads(official.stable_json(original)),original)
-    def original_archives(self,directory):
-        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6' for name in ('extension','standard','vmware')]
-        inputs={'extension':{'image':images[0],'oci_digest':'sha256:local'},'installers':[{'image':i,'extensions':['oci-layout@sha256:local']} for i in images[1:]],'image_config_digests':{},'image_archives':{}}
+    def original_archives(self,directory,arch='amd64'):
+        images=['ghcr.io/example/'+name+':v0.1.0-talos-v1.12.6'+('-arm64' if arch == 'arm64' else '') for name in ('extension','standard','vmware')]
+        inputs={'architecture':arch,'extension':{'image':images[0],'oci_digest':'sha256:local'},'installers':[{'image':i,'extensions':['oci-layout@sha256:local']} for i in images[1:]],'image_config_digests':{},'image_archives':{}}
         for image,filename in zip(images,stage.ARCHIVES):
             archive=directory/filename
             with tarfile.open(archive,'w') as tf:
-                for name,data in [('manifest.json',json.dumps([{'RepoTags':[image],'Config':'config.json','Layers':[]}]).encode()),('config.json',json.dumps({'architecture':'amd64','image':image}).encode())]:
+                for name,data in [('manifest.json',json.dumps([{'RepoTags':[image],'Config':'config.json','Layers':[]}]).encode()),('config.json',json.dumps({'architecture':arch,'os':'linux','image':image}).encode())]:
                     member=tarfile.TarInfo(name);member.size=len(data);tf.addfile(member,io.BytesIO(data))
             inputs['image_config_digests'][image]=build.archive_config_digest(archive)
             inputs['image_archives'][image]={'file':filename,'sha256':build.file_sha256(archive)}
@@ -666,13 +666,13 @@ class BuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src, dst = Path(d)/'source.tar', Path(d)/'target.tar'
             with tarfile.open(src, 'w') as tf:
-                for name, content in [('manifest.json', json.dumps([{'RepoTags':['ghcr.io/siderolabs/installer-base:v1.12.6'],'Config':'config.json','Layers':[]}]).encode()), ('config.json', b'{"architecture":"amd64"}')]:
+                for name, content in [('manifest.json', json.dumps([{'RepoTags':['ghcr.io/siderolabs/installer-base:v1.12.6'],'Config':'config.json','Layers':[]}]).encode()), ('config.json', b'{"architecture":"amd64","os":"linux"}')]:
                     member = tarfile.TarInfo(name); member.size=len(content); tf.addfile(member,io.BytesIO(content))
             build.retag_archive(src, dst, 'ghcr.io/example/installer:v0.1.0-talos-v1.12.6')
-            self.assertEqual(build.archive_config_digest(dst),'sha256:'+hashlib.sha256(b'{"architecture":"amd64"}').hexdigest())
+            self.assertEqual(build.archive_config_digest(dst),'sha256:'+hashlib.sha256(b'{"architecture":"amd64","os":"linux"}').hexdigest())
             with tarfile.open(dst) as tf:
                 self.assertEqual(json.load(tf.extractfile('manifest.json'))[0]['RepoTags'], ['ghcr.io/example/installer:v0.1.0-talos-v1.12.6'])
-                self.assertEqual(tf.extractfile('config.json').read(), b'{"architecture":"amd64"}')
+                self.assertEqual(tf.extractfile('config.json').read(), b'{"architecture":"amd64","os":"linux"}')
             digest = build.docker_to_oci(dst, Path(d)/'oci')
             self.assertEqual(json.loads((Path(d)/'oci/index.json').read_text())['manifests'][0]['digest'], digest)
 

@@ -65,6 +65,30 @@ def existing_manifest(image):
 
 
 def publish_images(inputs, verify_existing=False, preflight_only=False):
+    if 'architectures' in inputs:
+        targets = inputs['architectures']
+        if inputs.get('schema_version') != 2 or set(targets) != {'amd64', 'arm64'}:
+            raise RuntimeError('release requires both architectures')
+        for arch, target in targets.items():
+            if target.get('architecture') != arch or 'architectures' in target:
+                raise RuntimeError('release architecture record mismatch')
+        all_images = [image for target in targets.values() for image in target['image_config_digests']]
+        if len(set(all_images)) != len(all_images):
+            raise RuntimeError('architectures share release image tags')
+        # Establish every tag for both targets before the first registry mutation.
+        for target in targets.values():
+            publish_images(target, verify_existing, preflight_only=True)
+        if preflight_only:
+            return {'preflight': True, 'inputs': copy.deepcopy(inputs)}
+        results = {arch: publish_images(target, verify_existing) for arch, target in targets.items()}
+        return {'schema_version': 2, 'images': [image for result in results.values() for image in result['images']],
+                'inputs': {'schema_version': 2, 'architectures': {arch: result['inputs'] for arch, result in results.items()}},
+                'test_image_locks': {arch: result['test_image_lock'] for arch, result in results.items() if 'test_image_lock' in result},
+                'licenses': 'See amd64-build-metadata.json, arm64-build-metadata.json and /usr/local/share/licenses/talos-sysbox in each extension.',
+                'corresponding_source': 'amd64-sources.tar.gz and arm64-sources.tar.gz contain matching sources for each target.'}
+    arch = inputs.get('architecture', 'amd64')
+    if arch not in ('amd64', 'arm64'):
+        raise RuntimeError('unsupported release architecture')
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
     if len(images)!=3:raise RuntimeError('release requires extension and both installers')
     if 'probe' in inputs:
@@ -75,6 +99,8 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
             raise RuntimeError('unexpected probe image')
         if inputs['probe']['test_image_lock']['test_images']['proc_transfer_probe']['config_digest'] != inputs['image_config_digests'][image]:
             raise RuntimeError('probe archive/configuration mismatch')
+        if inputs['probe']['test_image_lock']['test_images']['proc_transfer_probe'].get('architecture', 'amd64') != arch:
+            raise RuntimeError('probe architecture mismatch')
         images.append(image)
     if len(set(images)) != len(images):raise RuntimeError('duplicate release images')
     if not verify_existing:
@@ -85,7 +111,8 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
     # publication of a different rebuild under the same fixed version.
     states=[]
     for image in images:
-        if not image.startswith('ghcr.io/') or not re.search(r':v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+$',image):
+        suffix = '' if arch == 'amd64' else '-arm64'
+        if not image.startswith('ghcr.io/') or not re.search(r':v\d+\.\d+\.\d+-talos-v\d+\.\d+\.\d+' + suffix + '$',image):
             raise RuntimeError('unexpected release image name/tag')
         manifest=existing_manifest(image)
         expected=inputs['image_config_digests'][image]
@@ -106,7 +133,7 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
     records=[]
     for image,_ in states:
         digest=anonymous_digest(image, expected_config=inputs['image_config_digests'][image])
-        records.append({'image':image,'digestRef':image.split(':')[0]+'@'+digest,'digest':digest,'anonymous_pull':True,'architecture':'amd64'})
+        records.append({'image':image,'digestRef':image.split(':')[0]+'@'+digest,'digest':digest,'anonymous_pull':True,'architecture':arch})
     result = {'images':records,'inputs':published_inputs(inputs,records[0]['digestRef']),
             'licenses':'See build-metadata.json and /usr/local/share/licenses/talos-sysbox in the extension.',
             'corresponding_source':'sources.tar.gz of this release contains matching Sysbox, Talos/kernel, official extensions, Go modules and Ubuntu sources, build recipes and packaging patches.'}

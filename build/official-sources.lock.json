@@ -197,7 +197,7 @@
     {
       "component": "pkgs/grub",
       "file": "grub.tar.xz",
-      "url": "https://ftpmirror.gnu.org/gnu/grub/grub-2.12.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/grub/grub-2.12.tar.xz",
       "sha256": "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa"
     },
     {
@@ -272,5 +272,19 @@
       "url": "https://go.dev/dl/go1.25.8.src.tar.gz",
       "sha256": "e988d4a2446ac7fe3f6daa089a58e9936a52a381355adec1c8983230a8d6c59e"
     }
-  ]
+  ],
+  "base_installers": {
+    "amd64": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:9c8b9888993b30c3547879fdcee138fa9a25503b41ec2fdc5ae3671946f1b5a3",
+    "arm64": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:af4d2c80b3f3ec51ff4be1d898132ed8e1d54611618b30b0135fbb2d26abd49a"
+  },
+  "sboms": {
+    "amd64": {
+      "url": "https://github.com/siderolabs/talos/releases/download/v1.12.6/talos-amd64.spdx.json",
+      "sha256": "a701af16f4d8b6643916a618bc087c281de8d275b5b46a29dfc7872467c48576"
+    },
+    "arm64": {
+      "url": "https://github.com/siderolabs/talos/releases/download/v1.12.6/talos-arm64.spdx.json",
+      "sha256": "a701af16f4d8b6643916a618bc087c281de8d275b5b46a29dfc7872467c48576"
+    }
+  }
 }

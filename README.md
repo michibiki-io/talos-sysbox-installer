@@ -1,6 +1,6 @@
 # talos-sysbox-installer
 
-Pinned, isolated builds of the amd64 Sysbox extension and standard/VMware Talos installers.
+Pinned, isolated builds of the amd64 and ARM64 Sysbox extension and standard/VMware Talos installers.
 
 ## Contents / 目次
 
@@ -27,13 +27,30 @@ Pinned, isolated builds of the amd64 Sysbox extension and standard/VMware Talos 
 
 ### Build and image variants
 
-Requirements: amd64 Linux, Python 3.11+, Docker with Buildx, and HTTPS access to the pinned registries, Ubuntu snapshot and upstream release archives.
+Requirements: native amd64 or ARM64 Linux matching the build target, Python 3.11+, Docker with Buildx, and HTTPS access to the pinned registries, Ubuntu snapshot and upstream release archives.
 No host Go compiler or installed helper programs are used.
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 scripts/build.py --version 0.2.0
+python3 scripts/build.py --version 0.2.0  # native amd64, output .build/
+python3 scripts/build.py --version 0.2.0 --arch arm64 --with-probe  # native ARM64, output .build/arm64/
 ```
+
+`--arch` selects the default architecture lock; `--lock FILE` selects an explicit lock, and conflicting `--arch`/lock values are rejected.
+Use `--output DIR` to choose a separate output directory. Both installer variants, the extension, optional probe, validation tools and corresponding sources use the selected target.
+The amd64 tag remains `v<project-version>-talos-v<talos-version>`; ARM64 appends `-arm64` for every image, including the probe.
+These are separate single-platform tags. Select the release image record whose `architecture` matches the node; do not use an amd64 digest on ARM64.
+
+Test and release builds run on native runners: `ACTIONS_RUNNER` for amd64 (fallback `ubuntu-latest`) and `ACTIONS_RUNNER_ARM64` for ARM64 (fallback `ubuntu-24.04-arm`). Fork PRs always use the corresponding GitHub-hosted runner.
+Build-embedded supervisor/unit/upstream checks, including kernel/seccomp checks, helper rejection and version identity checks retain identical fail-closed rules on both targets.
+They do not establish Talos runtime behavior. **ARM64 runtime verification is UNRUN and is performed separately.**
+Host clients installed by `scripts/install_test_tools.py` follow the host architecture; tools copied into validation Pods and helm archive paths follow the selected target lock.
+For a separate ARM64 runtime run, pass `--lock versions.arm64.lock.json` to the existing validation harness and use the ARM64 build metadata. Do not reuse amd64 runtime evidence.
+
+A new automated release combines both native outputs into schema-v2 `images.json` (`architectures.amd64` and `architectures.arm64`), while each original per-target input remains intact.
+GitHub Release assets use `amd64-`/`arm64-` prefixes for `extension.tar`, `standard-image.tar`, `vmware-image.tar`, `probe-image.tar`, `sources.tar.gz` and `build-metadata.json`.
+`release-images.json` and `approved-runtime-images.json` list both targets; probe distribution locks are `amd64-test-images.lock.json` and `arm64-test-images.lock.json`.
+The serialized release retains both source bundles before binary pushes, checks all tags before any push, and restores exact original archives on rerun. Legacy single-target amd64 releases remain verifiable without rebuilding.
 
 The locked Go and Ubuntu images build a static supervisor and collect shell, rsync, modprobe, iptables, fusermount3 and their libraries inside a container.
 The three Sysbox binaries are rebuilt from the release's exact component commits using read-only, checksum-verified Go module resolution and the locked builder's static C libraries.
@@ -41,7 +58,7 @@ GNU linker maps identify the actual linked static libraries so their matching so
 The checksum-verified upstream package supplies reference release documentation, not host-derived executables.
 Ubuntu's signed snapshot fixes package resolution; upstream archives have SHA-256 locks. APT operations retry downloads and then the same operation at most three times on failure, without changing the snapshot or disabling signature verification.
 Each operation allows three download retries, 30-second HTTP/HTTPS timeouts, and two 5-second waits between the three operation attempts. Persistent failures still stop the build. The `dependencies` Docker target permits checking snapshot indexes and build dependencies without building the installers.
-Build inputs are in [versions.lock.json](versions.lock.json).
+Build inputs are in [versions.lock.json](versions.lock.json) for amd64 and [versions.arm64.lock.json](versions.arm64.lock.json) for ARM64.
 The context physically contains only `build/`, `supervisor/`, the lock and the project license.
 It never includes local configs, logs or state.
 For hosts without a working default Docker bridge, `--network host` is an explicit local build option; it does not change Docker configuration.
@@ -53,7 +70,7 @@ Select an existing Buildx instance with `--builder NAME`.
 | `ghcr.io/michibiki-io/talos-sysbox-installer-standard` | Sysbox, iscsi-tools, util-linux-tools |
 | `ghcr.io/michibiki-io/talos-sysbox-installer-vmware` | Standard set plus vmtoolsd-guest-agent |
 
-All tags have the form `v<project-version>-talos-v<talos-version>`, for example `v0.2.0-talos-v1.12.6`.
+amd64 tags have the form `v<project-version>-talos-v<talos-version>`, for example `v0.2.0-talos-v1.12.6`; ARM64 tags append `-arm64`.
 Project semver describes this repository; Talos and Sysbox retain their independent upstream versions.
 Official extensions are consumed directly by digest from the catalogue for the selected Talos release.
 The custom extension is passed to imager through an OCI layout, avoiding a local insecure registry.
@@ -62,13 +79,13 @@ Generated archives are retagged before loading so they never overwrite or publis
 Local composition records label the custom manifest as `oci-layout@sha256:…`.
 Publication replaces that local reference with the anonymously verified GHCR manifest digest; the two digests need not match.
 
-Outputs under `.build/` include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
+Outputs under `.build/` (amd64) or `.build/arm64/` (ARM64) include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
 To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
 The VMware agent is reserved for the VMware variant.
 Build and source-inventory JSON use stable key ordering. Fixed inputs and repeatable runtime payloads do not guarantee identical OCI/image digests across builders: image/layer timestamps and exporter details may differ. Preserve original release archives for retries rather than rebuilding an existing version tag.
 Use the same `--lock FILE` for either runtime validation runner; the selected lock is included as `project/versions.lock.json` in the corresponding-source archive.
 The validation client is deliberately locked to talosctl 1.13.5 while the target OS remains Talos 1.12.6. Its Docker-cluster provisioning/runtime checks and read-only 1.12.6 API preflight have been exercised; upgrade/reboot compatibility must be recorded by real-node validation separately. Changing the client requires repeating those checks.
-CI sends fork PRs to GitHub-hosted runners. A configured `ACTIONS_RUNNER` override for trusted branches must identify a disposable, isolated runner with no production credentials or workloads.
+CI sends fork PRs to GitHub-hosted runners. A configured `ACTIONS_RUNNER` or `ACTIONS_RUNNER_ARM64` override for trusted branches must identify a disposable, isolated runner with no production credentials or workloads.
 Any new Talos release requires explicit compatibility validation before changing the manifest constraint.
 
 ### Installation and runtime opt-in
@@ -150,20 +167,20 @@ Manager runs with `--disable-shiftfs`; helper rootfs identifies itself as Talos.
 
 ### Validation and compatibility
 
-The manifest is restricted to **Talos 1.12.6**, Sysbox 0.7.1 and amd64.
+The manifest is restricted to **Talos 1.12.6**, Sysbox 0.7.1 and the selected amd64/arm64 target.
 The functional design baseline is Talos kernel 6.18.18-talos, Kubernetes 1.35.2 and containerd 2.1.6.
 Runtime validation uses checksum-locked Docker 27.5.1, kind 0.31.0, kindest/node 1.35.0, kubectl 1.35.2 and Helm 3.19.0.
 New artifacts require their own validation; historical design results do not validate this build.
 Arm64, SELinux enforcing and VMware guest-agent runtime behavior are unvalidated unless release-specific evidence explicitly records them.
 
-CI builds both variants and runs supporting **Talos-in-Docker** validation against a newly owned cluster using the host kernel.
+PR CI runs static/unit checks and builds both variants plus the probe for both architectures. Supporting **Talos-in-Docker** validation is retained behind the Test workflow's explicit `workflow_dispatch` input `run_runtime=true` (default false); it never runs on PRs. This ARM64 implementation does not trigger it. A manual run creates an owned cluster using the host kernel.
 It never connects to an existing real cluster.
 This mode is not real Talos-kernel coverage and does not boot the installer.
 On a disk-constrained Docker host, `--constrained-disk` changes only the disposable node's eviction and image-GC thresholds (5% free disk, 95% high watermark).
 This option is never used on real Talos targets.
 Run it locally only when Docker networking, resources and required host kernel facilities are available:
 The host's `br_netfilter` module must already be loaded; the local harness refuses to change host kernel modules.
-An operator may explicitly authorize a temporary load/unload, while CI loads it only on its disposable runner.
+An operator may explicitly authorize a temporary load/unload, while an explicitly requested runtime CI run loads it only on its disposable runner.
 
 ```sh
 python3 test/e2e/scripts/talos_docker.py \
@@ -235,10 +252,10 @@ Public upstream references: [Sysbox release](https://github.com/nestybox/sysbox/
 
 ### ビルドとイメージの種類
 
-amd64 Linux、Python 3.11 以降、Buildx 付き Docker、固定した registry と Ubuntu snapshot と上流アーカイブへの HTTPS 接続を使用します。
+対象に一致する native amd64 または ARM64 Linux、Python 3.11 以降、Buildx 付き Docker、固定した registry と Ubuntu snapshot と上流アーカイブへの HTTPS 接続を使用します。
 ホストの Go compiler や helper は使用しません。
 英語節のビルドコマンドで、固定した Go と Ubuntu のコンテナ内から static supervisor、shell、rsync、modprobe、iptables、fusermount3 と共有ライブラリを生成します。
-ビルド入力は `versions.lock.json` にあり、署名付き Ubuntu snapshot と上流アーカイブの SHA-256 を検証します。APT はダウンロードを再試行し、失敗時には同じ操作を最大3回試します。snapshot の変更や署名検証の無効化は行いません。
+ビルド入力は amd64 用の `versions.lock.json` と ARM64 用の `versions.arm64.lock.json` にあり、署名付き Ubuntu snapshot と上流アーカイブの SHA-256 を検証します。APT はダウンロードを再試行し、失敗時には同じ操作を最大3回試します。snapshot の変更や署名検証の無効化は行いません。
 各操作はダウンロード再試行3回、HTTP／HTTPS timeout 30秒、操作の試行間に5秒の待機2回を設定します。恒久障害時はビルドを停止します。Docker の `dependencies` target で、installer を構築せずに snapshot index とビルド依存を確認できます。
 Sysbox の3つの binary は release が固定した component commit、読み取り専用の module 解決と checksum 検証で取得する Go 依存、固定 builder の static C library から再ビルドします。
 GNU linker map で実際に結合された static library を特定し、その対応ソースとライセンスを application source と再ビルド手順と一緒に提供します。
@@ -251,7 +268,8 @@ Docker の恒久設定は変更しません。
 自作 extension は Sysbox とノード backend を含みます。
 共通版 installer はそれに iscsi-tools と util-linux-tools を加え、VMware 版だけ vmtoolsd-guest-agent を加えます。
 イメージ名は英語節の表を参照してください。
-タグは `v<project-version>-talos-v<talos-version>` です。
+amd64 のタグは `v<project-version>-talos-v<talos-version>`、ARM64 は末尾に `-arm64` を付けます。
+probe を含むすべてのイメージをアーキテクチャ別の単一 platform tag に分けます。
 プロジェクトの semantic version、Talos 版、Sysbox 版は別々に管理します。
 公式 extension は対象 Talos の catalogue にある digest を直接使用します。
 自作 extension は OCI layout として imager に渡すため、ローカル insecure registry を必要としません。
@@ -259,18 +277,36 @@ Docker の恒久設定は変更しません。
 ローカルの構成記録は自作 manifest を `oci-layout@sha256:…` として区別します。
 公開時は匿名取得を確認した GHCR manifest digest に置き換えます。両者の digest は一致するとは限りません。
 
-`.build/` に3つのイメージ、`images.json`、installer ごとの `inputs.json`、`evidence/build-metadata.json`、`sources.tar.gz` を生成します。
+amd64 は `.build/`、ARM64 は `.build/arm64/` に3つのイメージ、`images.json`、installer ごとの `inputs.json`、`evidence/build-metadata.json`、`sources.tar.gz` を生成します。
 構成変更は lock のコピーで `standard_extensions` と対応する digest を編集し、`--lock FILE` で指定します。
 VMware agent は VMware 版だけに含めます。
 ビルドと source inventory の JSON は key 順序を固定します。固定入力と同じ runtime payload を再生成できることは、builder 間の OCI／image digest の完全一致を保証しません。image／layer の timestamp や exporter の違いが残るため、既存 version tag の再ビルドではなく元の release archive を使って復旧します。
 runtime 検証 runner にも同じ `--lock FILE` を指定します。対応ソースの archive には、選択した lock を `project/versions.lock.json` として保存します。
 検証 client は talosctl 1.13.5、対象 OS は Talos 1.12.6 に固定しています。Docker クラスタ作成・runtime 検証と 1.12.6 API の読み取り preflight を確認しています。実ノードの更新・再起動の互換確認は別に記録し、client 更新時にこれらを再確認します。
-CI は fork PR を GitHub-hosted runner で実行します。信頼したブランチで `ACTIONS_RUNNER` を指定する場合も、production 資格情報や workload を持たない隔離された使い捨て runner に限ります。
+CI は fork PR を GitHub-hosted runner で実行します。信頼したブランチで `ACTIONS_RUNNER` または `ACTIONS_RUNNER_ARM64` を指定する場合も、production 資格情報や workload を持たない隔離された使い捨て runner に限ります。
 Talos 互換指定を広げる前に、新しい版で検証してください。
+
+ARM64 ホストでは `python3 scripts/build.py --version 0.2.0 --arch arm64 --with-probe` でビルドします。
+`--arch` で既定の lock を選び、`--lock FILE` で明示した lock と対象が異なる場合は拒否します。
+出力先は `--output DIR` で分離できます。
+Test とリリースのビルドは native runner を使い、amd64 は `ACTIONS_RUNNER`（既定 `ubuntu-latest`）、ARM64 は `ACTIONS_RUNNER_ARM64`（既定 `ubuntu-24.04-arm`）で指定します。
+fork PR は各アーキテクチャの GitHub-hosted runner で実行します。
+ビルド内の supervisor 単体テスト、kernel／seccomp を含む選択上流検査、helper 拒否確認、identity 照合は両対象で同じ fail-closed 条件を維持します。
+これらの成功は Talos 上の動作を証明しません。ARM64 の動作検証は UNRUN で、別途実施します。
+ホスト用 client はホストのアーキテクチャ、Pod 内で動かすツールと helm archive path は対象 lock で選びます。
+別途 ARM64 の検証を行う場合、既存ハーネスへ `--lock versions.arm64.lock.json` と ARM64 の build metadata を指定します。
+
+新しい自動リリースの `images.json` は schema v2 の `architectures.amd64` と `architectures.arm64` に元の入力を保持します。
+Release asset の `extension.tar`、`standard-image.tar`、`vmware-image.tar`、`probe-image.tar`、`sources.tar.gz`、`build-metadata.json` には `amd64-` または `arm64-` を付けます。
+`release-images.json` と `approved-runtime-images.json` は両対象を記録し、probe lock は `amd64-test-images.lock.json` と `arm64-test-images.lock.json` に分けます。
+公開は直列化し、両方の対応ソースを公開してから binary を push します。
+全 tag の事前検査と元 archive による再実行を維持し、従来の amd64 リリースも再ビルドせず検証できます。
+対象ノードと同じ `architecture` の digest を選択してください。
+
 
 ### 導入とruntimeの選択
 
-実際のリリースの `release-images.json` にある digest を使用し、対象 Talos 版、amd64、必要な extension 全件を保守作業前に確認します。
+実際のリリースの `release-images.json` にある digest を使用し、対象 Talos 版、ノードのアーキテクチャ、必要な extension 全件を保守作業前に確認します。
 VMware agent は VMware 以外で失敗して再起動するため、VMware 版は VMware 上で使用します。
 新規ノードの `machine.install.image` は運用者の非公開 machine config に設定します。
 このリポジトリはクラスタ認証情報や埋め込み設定を提供しません。
@@ -336,13 +372,16 @@ manager は `--disable-shiftfs` を使用し、helper rootfs の os-release は 
 
 ### 検証と互換性
 
-manifest の対象は Talos 1.12.6、Sysbox 0.7.1、amd64 です。
+manifest の対象は Talos 1.12.6、Sysbox 0.7.1 と、選択した amd64／arm64 です。
 設計上の実行基準は Talos kernel 6.18.18-talos、Kubernetes 1.35.2、containerd 2.1.6 です。
 検証ツールと workload の固定版は英語節にあります。
 新しい成果物には新しい検証が必要で、過去の成功を今回のビルドの成功証拠にしません。
 arm64、SELinux enforcing、VMware agent の実動作は、リリースごとの証拠がある場合だけ検証済みとします。
 
-CI の Talos-in-Docker は、今回の helper rootfs を使う新しい専用クラスタで実行します。
+PR CI は両アーキテクチャの静的検査とユニットテスト、両 installer と probe のビルドを実行します。
+Talos-in-Docker は Test workflow の手動入力 `run_runtime=true`（既定 false）でのみ実行でき、PR では起動しません。
+今回の ARM64 対応では実行しません。
+手動実行では helper rootfs を使う新しい専用クラスタを作成します。
 ホスト kernel を使用する補助検証で、実 Talos kernel や installer の起動を検証するものではありません。
 ディスク容量が制約される Docker ホストでは `--constrained-disk` で専用ノードだけの閾値を空き5%、image GC 開始95%へ調整できます。
 実 Talos 対象には適用しません。

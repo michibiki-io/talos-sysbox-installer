@@ -229,7 +229,7 @@ class Integration(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 1 if args[0].endswith('mount-helper') else 0,
                                                        stdout='', stderr=(b'sysfs-transfer:' if 'sysfs' in args[0] else b'proc-transfer:') if args[0].endswith('mount-helper') else '')
                 namespace = {'OUT': root, 'Path': lambda value: ROOT / Path(value).relative_to('/work/project'),
-                             'proc_transfer': p, 'integration_record': {'lock': self.lock},
+                             'LOCK': {'architecture': 'amd64'}, 'proc_transfer': p, 'integration_record': {'lock': self.lock},
                              'stable_json': json.dumps, 'subprocess': SimpleNamespace(run=command),
                              'shutil': SimpleNamespace(copy2=copy, copytree=shutil.copytree)}
                 exec(compile(ast.Module(body=[function], type_ignores=[]), 'build/assemble.py', 'exec'), namespace)
@@ -347,7 +347,7 @@ class Integration(unittest.TestCase):
                 tf.addfile(member, io.BytesIO(data))
         archive = Path(work) / 'extension.tar'
         with tarfile.open(archive, 'w') as tf:
-            for name, data in [('manifest.json', json.dumps([{'Layers': ['layer.tar']}]).encode()), ('layer.tar', layer.getvalue())]:
+            for name, data in [('manifest.json', json.dumps([{'Config': 'config.json', 'Layers': ['layer.tar']}]).encode()), ('config.json', b'{"architecture":"amd64","os":"linux"}'), ('layer.tar', layer.getvalue())]:
                 member = tarfile.TarInfo(name); member.size = len(data); tf.addfile(member, io.BytesIO(data))
         return archive, metadata
 
@@ -663,7 +663,7 @@ class OperatorContracts(unittest.TestCase):
             root = Path(work); (root / 'image-versions.json').write_text('{}')
             lock = {'schema_version': 1, 'build_profile': p.BUILD_PROFILE, 'validation_artifacts_lock_sha256': sha,
                     'source_lock_sha256': sha, 'image_versions_sha256': hashlib.sha256(b'{}').hexdigest(),
-                    'test_images': {'proc_transfer_probe': {'distribution': 'local-archive-import-only',
+                    'test_images': {'proc_transfer_probe': {'architecture': 'amd64', 'distribution': 'local-archive-import-only',
                      'anonymous_pull_verified': False, 'local_tag': 'probe:fixed',
                      'oci_digest': 'sha256:' + sha, 'config_digest': 'sha256:' + 'c'*64}}}
             image_lock = root / 'images.json'; image_lock.write_text(json.dumps(lock))
@@ -687,7 +687,7 @@ class OperatorContracts(unittest.TestCase):
                      mock.patch.object(launcher.os, 'geteuid', return_value=0), \
                      mock.patch.object(launcher.os, 'uname', return_value=SimpleNamespace(machine='x86_64')), \
                      mock.patch.object(launcher, 'trusted_host_namespaces', return_value={'pid': 'pid:[1]', 'user': 'user:[2]'}), \
-                     mock.patch.object(launcher, 'verify_artifacts', return_value={'revision': revision, 'source_lock_sha256': sha}), \
+                     mock.patch.object(launcher, 'verify_artifacts', return_value={'architecture': 'amd64', 'revision': revision, 'source_lock_sha256': sha}), \
                      mock.patch.object(launcher, 'digest', return_value=sha), \
                      mock.patch.object(launcher.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)), \
                      mock.patch.object(launcher.subprocess, 'check_output', side_effect=[

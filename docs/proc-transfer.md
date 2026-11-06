@@ -23,7 +23,7 @@
 
 ### Source selection and updates
 
-[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` and archive SHA-256 `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e`. The 55-file immutable inventory includes merged upstream #11 / PR #12, correcting the fresh-mount versus inherited FUSE-only oracle contract and its callers without changing production behavior. All four production helper/patch inputs remain byte-identical to the previous approved lock. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. This profile also enables fresh nested sysfs mounts and virtual-network FUSE repairs. arm64 expansion remains outside scope.
+[build/proc-transfer.lock.json](../build/proc-transfer.lock.json) is the authoritative integration lock. It selects public upstream commit `122de40f8a8ad70973f827fe59ab9d8a60478ded` and archive SHA-256 `4ecfeffb4e3f3dc56e819da881de05a263573160918aa058ab147e4c8197a67e`. The 55-file immutable inventory includes merged upstream #11 / PR #12, correcting the fresh-mount versus inherited FUSE-only oracle contract and its callers without changing production behavior. All four production helper/patch inputs remain byte-identical to the previous approved lock. This reviewed baseline matches the Sysbox 0.7.1 component pins and implements protected nested procfs and binding the existing `/sys` tree. This profile also enables fresh nested sysfs mounts and virtual-network FUSE repairs. The same profile is built for amd64 and ARM64; ARM64 runtime verification remains UNRUN.
 
 The builder downloads the immutable public archive, verifies its actual SHA-256 and complete regular-file inventory, then checks the upstream source manifest against the downstream root/fs/runc/ipc/libs/fuse revisions and repositories. Missing files, hash/revision differences, unsupported manifests, helper contracts, archive links/path traversal and patch scope stop the build. Nothing reads an inspection checkout or private evidence at build/runtime. There is no branch-following service.
 
@@ -46,7 +46,7 @@ The updater refuses to overwrite the authoritative lock and compares all four pr
 
 The existing digest-pinned Go 1.26.2/Ubuntu builder, signed `20261001T000000Z` APT snapshot, finite retries, read-only Go modules and protobuf generator 1.3.2 remain effective inputs. The upstream's Go 1.27.2/generator 1.3.5 are recorded as upstream metadata, not silently adopted.
 
-Standalone runc and mgr compile first from unpatched component sources. Immediately before fs compilation, the integration applies `proc-transfer.patch` followed by `sysfs-transfer.patch` (including local bazil) with `patch --batch --forward --fuzz=0` after a successful dry-run. The nsenter C change is linked into fs only. Both static production helpers compile from the same verified archive. The builder and final extension layer assertions require a matching amd64 static triple, root ownership and mode 0755; checkpoint tools must be absent from the production rootfs. Both installer variants consume this same verified extension OCI layout.
+Standalone runc and mgr compile first from unpatched component sources. Immediately before fs compilation, the integration applies `proc-transfer.patch` followed by `sysfs-transfer.patch` (including local bazil) with `patch --batch --forward --fuzz=0` after a successful dry-run. The nsenter C change is linked into fs only. Both static production helpers compile from the same verified archive. The builder and final extension layer assertions require a matching static triple for the selected amd64/arm64 target, root ownership and mode 0755; checkpoint tools must be absent from the production rootfs. Both installer variants consume this same verified extension OCI layout.
 
 The helper is installed at host `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`, visible as backend `/proc-mount-helper`. The sysfs helper is installed alongside it at `sysfs-mount-helper`, visible as `/sysfs-mount-helper`. The supervisor sets both `--env=SYSBOX_PROC_TRANSFER_HELPER=/proc-mount-helper` and `--env=SYSBOX_SYSFS_TRANSFER_HELPER=/sysfs-mount-helper` in its actual system-containerd fs invocation. Caller environment variables do not configure the daemon. Existing owned backend supervision, node PID entry, mount propagation and runtime registration remain in place. Install the complete installer in an approved maintenance operation, retaining all other required extensions. No machine-config switch or runtime filter change enables this path.
 
@@ -74,7 +74,7 @@ For CI and approved local validation, `scripts/build_validation_image.py` export
 
 Real Talos operations require separate approval naming the concrete node, generated probe image and temporary namespace/privileged launcher operations. The target must already have this build installed and `sysbox-runc` registered. Run the existing supporting Docker/kind/Helm/Service/default-runtime validation separately; the proc runner does not replace it.
 
-The trusted launcher requires amd64, Python **>=3.12**, initial User namespace root, node PID namespace/proc access, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` (pidfd_getfd), `CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_CHROOT`, and access to CRI and system-containerd sockets. It uses the image's fixed ctr/nsenter/Python and checkpoint helper. An authorized privileged hostPID Pod on the exact node supplies that context; the actual probe remains a nonprivileged UID/GID 1001 Sysbox Pod with the production filter. Namespace identities are captured independently from `/proc/1/ns/{pid,user}` in the trusted launcher, never inferred inside the probe.
+The trusted launcher requires native amd64 or ARM64 matching its probe and artifact locks, Python **>=3.12**, initial User namespace root, node PID namespace/proc access, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE` (pidfd_getfd), `CAP_SETUID`, `CAP_SETGID`, `CAP_SYS_CHROOT`, and access to CRI and system-containerd sockets. It uses the image's fixed ctr/nsenter/Python and checkpoint helper. An authorized privileged hostPID Pod on the exact node supplies that context; the actual probe remains a nonprivileged UID/GID 1001 Sysbox Pod with the production filter. Namespace identities are captured independently from `/proc/1/ns/{pid,user}` in the trusted launcher, never inferred inside the probe.
 
 The launcher mounts only `/usr/local` and `/run/containerd` from the host, both read-only. Talos system-containerd is reached at `/proc/1/root/system/run/containerd/containerd.sock` only after the independent namespace and initial UID-map checks. `/system/run/containerd` is absent from the kubelet root view; neither that path nor a proc-root magic-link replacement is a hostPath bind source. CRI stays at `/run/containerd/containerd.sock`. No host filesystem changes are required.
 
@@ -135,7 +135,7 @@ Actual-path execution uses ctr task exec with UID/GID 1001 and retains the runti
 
 ### Evidence boundaries
 
-The target remains amd64 Talos 1.12.6/kernel 6.18.18-talos with Sysbox 0.7.1, standard and VMware installers. Historical v0.3.1 proc/protection/sys-bind and supporting-runtime results are baseline evidence only. Its UID1001 bwrap fresh-sysfs shared/new Network × RW/RO diagnostic failed EPERM. The separate lower-level unshare diagnostic returned EINVAL even for its bind control; it is a different entry path. Neither old artifact nor upstream arm64/PoC results prove this changed build works on actual Talos.
+The targets are amd64 and ARM64 Talos 1.12.6/kernel 6.18.18-talos (ARM64 runtime verification is UNRUN) with Sysbox 0.7.1, standard and VMware installers. Historical v0.3.1 proc/protection/sys-bind and supporting-runtime results are baseline evidence only. Its UID1001 bwrap fresh-sysfs shared/new Network × RW/RO diagnostic failed EPERM. The separate lower-level unshare diagnostic returned EINVAL even for its bind control; it is a different entry path. Neither old artifact nor upstream arm64/PoC results prove this changed build works on actual Talos.
 
 The inherited v0.4.0 official oracle stopped on regular `bonding_masters` after a successful fresh nested mount. Later diagnostic corrections passed ten sysfs subcases, 79 distinct proc/sysfs checks across a full run and four lifecycle replays, and seven supporting runtime checks on amd64 Talos 1.12.6/VMware. Those modified diagnostic fixtures are not packaged here and do not verify changed official artifacts. Even with identical helper/patch inputs, the new revision changes the fs embedded identity and may change output hashes; rebuild and verify the new installer/probe pair.
 
@@ -143,7 +143,7 @@ The unchanged v0.4.1 actual-Talos official suite passed the original proc/bwrap/
 
 The current source contract is `proc-sysfs-transfer-v1-thread-pidfd`; build profile `proc-sysfs-fuse-v1` is required in production metadata, artifact lock and image lock. The fs embedded commit suffix is `+proc-sysfs-transfer.REVISION12`. These distinguish proc+sysfs even when the immutable upstream revision is unchanged. Proc-only/missing/mismatched profiles, source locks, inventories and hashes fail closed. Both installers and the probe must come from the same inputs and outputs.
 
-Before merge, focused downstream tests, selected upstream fixed-builder tests, both installer/probe/source exports, offline release-asset checks and latest-head Test CI (including Talos-in-Docker supporting checks) must be recorded separately. A compiler/unit-test pass does not establish runtime mount behavior. Failed, conditional-skipped and UNRUN checks remain distinct. Full builds and CI are separate from the focused local edit/test stage.
+Before merge, focused downstream tests, selected upstream fixed-builder tests, both installer/probe/source exports, offline release-asset checks and latest-head Test CI (static/unit/build checks on native amd64 and ARM64 runners; runtime E2E is recorded separately) must be recorded separately. A compiler/unit-test pass does not establish runtime mount behavior. Failed, conditional-skipped and UNRUN checks remain distinct. Full builds and CI are separate from the focused local edit/test stage. Talos-in-Docker is available only through explicit Test workflow_dispatch with run_runtime=true (default false), never automatically on PRs; record it as UNRUN unless separately executed. ARM64 runtime checks are UNRUN for this implementation. Native builds retain the same embedded kernel/seccomp unit and helper checks on both targets.
 
 Actual Talos, official publication and anonymous pulls of the changed artifacts are **UNRUN**, deferred until human merge, official release and fresh approval naming a concrete target/image/operation. No node upgrade, reboot, cluster mutation, daemon reconfiguration or host policy change is authorized by this implementation. Unavailable disposable fixtures are UNRUN with their prerequisite reason, never silently omitted or treated as passes.
 
@@ -186,7 +186,7 @@ Every item below is currently UNRUN for changed official artifacts. Execute only
 production helper／patch 4入力の bytes は直前の承認済み lock と同一です。
 この基準は Sysbox 0.7.1 の component 固定値と一致し、保護された nested procfs と既存 `/sys` tree の bind を扱います。
 この profile は新規 nested sysfs mount と virtual-network FUSE 修正も有効にします。
-arm64 の拡張は対象外です。
+同じ profile を amd64 と ARM64 向けにビルドします。ARM64 の動作検証は UNRUN です。
 
 builder は公開 immutable archive を取得し、実際の SHA-256、全通常ファイルの hash、upstream manifest、root/fs/runc/ipc/libs/fuse の revision と repository を照合します。
 不足、不一致、未対応の manifest/helper 契約、archive の link や path traversal、patch 範囲の違いで停止します。
@@ -215,7 +215,7 @@ upstream の Go 1.27.2/generator 1.3.5 は metadata として記録し、無断�
 単体 runc と mgr を未パッチのソースで先にコンパイルします。
 fs のコンパイル直前に dry-run と `patch --batch --forward --fuzz=0` を実行し、`proc-transfer.patch`、`sysfs-transfer.patch` の順で適用し、local bazil と fs へリンクする runc nsenter を含めて変更します。
 同じ検証済み archive から static production helper 2個を生成します。
-builder と最終 extension layer の検査は、amd64 の static triple、root 所有、mode 0755、production rootfs 内に検査 helper がないことを要求します。
+builder と最終 extension layer の検査は、選択した amd64／arm64 の static triple、root 所有、mode 0755、production rootfs 内に検査 helper がないことを要求します。
 両 installer は、この共通 extension OCI layout を使います。
 
 helper の host path は `/usr/local/lib/containers/sysbox-fs/proc-mount-helper`、backend 内の path は `/proc-mount-helper` です。
@@ -285,7 +285,7 @@ CI では probe に収録した production metadata と両 installer の metadat
 対象には今回の build が導入済みで、`sysbox-runc` が登録済みである必要があります。
 既存の Docker/kind/Helm/Service/default-runtime 検証は別途維持します。
 
-trusted launcher は amd64、Python 3.12 以降、initial User namespace の root、node PID/proc へのアクセス、`CAP_SYS_ADMIN`、`CAP_SYS_PTRACE`、`CAP_SETUID`、`CAP_SETGID`、`CAP_SYS_CHROOT`、CRI と system-containerd socket を要求します。
+trusted launcher は probe と artifact lock に一致する native amd64 または ARM64、Python 3.12 以降、initial User namespace の root、node PID/proc へのアクセス、`CAP_SYS_ADMIN`、`CAP_SYS_PTRACE`、`CAP_SETUID`、`CAP_SETGID`、`CAP_SYS_CHROOT`、CRI と system-containerd socket を要求します。
 承認済み hostPID privileged Pod がこの環境を用意し、実 probe は production filter を保持する UID/GID 1001 の非 privileged Sysbox Pod として動きます。
 ホスト namespace は trusted launcher の `/proc/1/ns/{pid,user}` から独立して取得します。
 
@@ -348,7 +348,7 @@ capability/API の不足、版や hash の不一致、observer failure、timeout
 
 ### 検証結果の範囲
 
-対象は amd64 Talos 1.12.6/kernel 6.18.18-talos、Sysbox 0.7.1 の standard／VMware installer です。
+対象は amd64／ARM64 Talos 1.12.6/kernel 6.18.18-talos（ARM64 の動作検証は UNRUN）、Sysbox 0.7.1 の standard／VMware installer です。
 過去の v0.3.1 proc／保護／既存 sys bind と補助 runtime の成功は baseline です。
 UID1001 bwrap の新規 sysfs は、共有／新規 Network × RW／RO の4条件で EPERM でした。
 別の直接 unshare 診断は bind 対照も EINVAL となった別経路です。
@@ -369,9 +369,12 @@ fs の埋め込み commit suffix は `+proc-sysfs-transfer.REVISION12` です。
 上流 revision が同じでも proc-only と区別し、profile 不足／不一致、source lock、inventory、hash の不一致を拒否します。
 両 installer と probe は同じ入力と出力で照合します。
 
-merge 前には、focused 下流検査、固定 builder の選択上流検査、両 installer／probe／対応ソース、offline release asset 検査、最新 head の Test CI（Talos-in-Docker 補助検査を含む）を別々に記録します。
+merge 前には、focused 下流検査、固定 builder の選択上流検査、両 installer／probe／対応ソース、offline release asset 検査、最新 head の Test CI（native amd64／ARM64 の静的検査、ユニットテスト、ビルド）を別々に記録します。
 compile／unit test の成功だけでは mount 動作を証明しません。
 FAILED、条件付き skip、UNRUN を区別し、完全ビルドと CI は focused な編集／検査段階から分離します。
+Talos-in-Docker は Test の workflow_dispatch で `run_runtime=true`（既定 false）を指定した場合だけ実行し、PR では起動しません。
+別途実施しない限り UNRUN と記録し、今回の ARM64 動作検証も UNRUN です。
+native ビルド内の kernel／seccomp ユニット検査と helper 検査は両アーキテクチャで同じ条件を維持します。
 
 変更後の正式成果物による実 Talos、公開、匿名 pull は UNRUN です。
 人間の merge、正式 release、具体的な対象／image／操作の新たな承認後に実施します。

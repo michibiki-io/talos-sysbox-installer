@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from stage_release import ARCHIVES, find_release, validate_archives
+from stage_release import ARCHIVES, find_release, validate_archives, targets, asset_names
 
 
 def restore_images(inputs,directory):
@@ -19,6 +19,7 @@ def restore_images(inputs,directory):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--tag',required=True)
+    parser.add_argument('--inspect-only', action='store_true')
     a=parser.parse_args()
     # A tag can exist before assets or publication. Unknown gh errors fail closed.
     release=find_release(os.environ['GITHUB_REPOSITORY'],a.tag)
@@ -27,20 +28,24 @@ def main():
     staged=bool(release and 'images.json' in names)
     if release and not staged and not release['draft']:
         raise RuntimeError('Public release is missing original inputs; refusing replacement')
-    if staged:
-        if not {'images.json','build-metadata.json','sources.tar.gz',*ARCHIVES}<=names:
-            raise RuntimeError('Original release is missing matching source/provenance assets')
+    if staged and not a.inspect_only:
         Path('.build').mkdir(exist_ok=True)
         command=['gh','release','download',a.tag,'--pattern','images.json','--dir','.build']
         if published:command+=['--pattern','release-images.json']
-        else:
-            for filename in ARCHIVES:command+=['--pattern',filename]
         subprocess.run(command,check=True)
         inputs=json.loads(Path('.build/images.json').read_text())
-        if 'probe' in inputs:
-            if 'probe-image.tar' not in names:raise RuntimeError('Original probe archive missing')
-            if not published:
-                subprocess.run(['gh','release','download',a.tag,'--pattern','probe-image.tar','--dir','.build'],check=True)
+        if not set(asset_names(inputs)) <= names:
+            raise RuntimeError('Original release is missing matching source/provenance assets')
+        if not published:
+            records = targets(inputs)
+            for arch, record in (records or {'': inputs}).items():
+                directory = Path('.build') / arch
+                directory.mkdir(parents=True, exist_ok=True)
+                for filename in [*ARCHIVES, *(['probe-image.tar'] if 'probe' in record else [])]:
+                    asset = arch + '-' + filename if arch else filename
+                    subprocess.run(['gh','release','download',a.tag,'--pattern',asset,'--dir',str(directory)],check=True)
+                    if arch:
+                        (directory / asset).rename(directory / filename)
         if not published:restore_images(inputs,Path('.build'))
     with open(os.environ['GITHUB_OUTPUT'],'a') as output:
         output.write('reuse='+str(staged).lower()+'\ncompleted='+str(published).lower()+'\n')

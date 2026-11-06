@@ -105,8 +105,12 @@ class ReleaseTriggerTests(unittest.TestCase):
         self.assertIn("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", workflow)
         # Compute/tag creation must be inside serialization to avoid stale versions.
         self.assertNotIn('Compute release metadata', workflow.split('  publish:\n', 1)[0])
-        self.assertIn('Compute release metadata', publication)
-        self.assertIn('Create annotated git tag', publication)
+        self.assertIn('uses: ./.github/workflows/release-native.yml', publication)
+        native = (ROOT/'.github/workflows/release-native.yml').read_text()
+        self.assertIn('  workflow_call:', native)
+        self.assertNotIn('  push:', native)
+        self.assertIn('Compute release metadata', native)
+        self.assertIn('Create annotated git tag', native)
 
 
 
