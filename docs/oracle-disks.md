@@ -68,7 +68,7 @@ Choose a fresh output path. `--builder NAME` selects an existing Buildx builder;
 
 ### Isolation and failure recovery
 
-The generator has a private Docker `/dev`; it never binds host `/dev` or receives a physical host disk path. It has `SYS_ADMIN` for loop ioctls/mounting its own EFI filesystem, `MKNOD` for selected device nodes, and scoped file-ownership capabilities. AppArmor is disabled only for this container's mount operations; default Docker seccomp and no-new-privileges remain. A device-cgroup rule permits loop-control and block-device access, but only launcher-created nodes are visible. Kernel-assigned partition major/minor numbers are read from sysfs, never predicted.
+The generator has a private Docker `/dev`; it never binds host `/dev` or receives a physical host disk path. It has `SYS_ADMIN` for loop ioctls/mounting its own EFI filesystem, `MKNOD` for selected device nodes, and scoped file-ownership capabilities. AppArmor is disabled only for this container's mount operations; default Docker seccomp and no-new-privileges remain. Device cgroup rules permit loop-control, block major 7 (loop), and block major 259 (extended partitions). Major 259 also includes NVMe, so private node visibility and backing checks remain necessary. Only launcher-created nodes are visible. Kernel-registered partition numbers are read from sysfs, never predicted.
 
 The launcher selects a verified-unused loop, records it, and lets the unchanged official imager attach its scratch. A PATH gate runs before the first EFI formatter: it checks LOOP_GET_STATUS64 backing device/inode against the scratch, creates only that loop's already-registered EFI/META nodes, then execs the original official mkfs.vfat with unchanged arguments. This synchronizes node visibility before META is opened. The imager binary, boot assets and profile semantics are unchanged; the gate recipe hash is recorded. A race selecting a different free loop fails closed. There is no fallback to host `/dev` sharing.
 
@@ -176,7 +176,9 @@ GPT/FAT の識別子などが生成ごとに変わり得るため、別々の生
 `SYS_ADMIN` は所有 loop の ioctl と EFI mount、`MKNOD` は選択した node の作成に使用します。
 ファイル操作に必要な capability も限定します。
 AppArmor の無効化はこのコンテナだけで、既定 seccomp と no-new-privileges は維持します。
-device cgroup は loop-control と block device を許可しますが、見える block node は launcher が作ったものだけです。
+device cgroup は loop-control、loop の major 7、extended partition の major 259 を許可します。
+major 259 には NVMe も含まれるため、私有 node と backing の所有確認を併用します。
+見える block node は launcher が作ったものだけです。
 partition の番号は sysfs の登録値を使い、予測しません。
 
 launcher は未使用 loop を選択して記録し、公式 imager 自身が scratch を attach します。

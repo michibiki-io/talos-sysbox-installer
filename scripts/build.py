@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_SCRIPTS = ('build.py','publish.py','build_validation_image.py','update_proc_transfer.py',
+                   'proc_transfer_operator.py','oracle_disk.py','disk_artifacts.py')
 import sys
 sys.path.insert(0, str(ROOT / 'build'))
 import proc_transfer
@@ -167,7 +169,7 @@ def main():
         for name in ('build', 'supervisor'):
             shutil.copytree(ROOT / name, context / name, ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
         (context/'scripts').mkdir()
-        for name in ('build.py','publish.py','build_validation_image.py','update_proc_transfer.py','proc_transfer_operator.py','oracle_disk.py','disk_artifacts.py'):shutil.copy2(ROOT/'scripts'/name,context/'scripts'/name)
+        for name in PROJECT_SCRIPTS:shutil.copy2(ROOT/'scripts'/name,context/'scripts'/name)
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')
         common = ['docker','buildx','build','--builder',a.builder,'--network',a.network,'--platform','linux/'+arch,'--build-arg','GO_IMAGE='+lock['go'],'--build-arg','UBUNTU_IMAGE='+lock['ubuntu'],'--build-arg','APT_SNAPSHOT='+lock['apt_snapshot'],'--build-arg','CATALOGUE_IMAGE='+lock['catalogue'],'-f',str(context/'build/Dockerfile')]

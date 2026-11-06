@@ -23,6 +23,21 @@ inspect = importlib.util.module_from_spec(spec); spec.loader.exec_module(inspect
 
 
 class OracleInputsTests(unittest.TestCase):
+    def test_probe_isolated_context_contains_every_dockerfile_project_script(self):
+        import build_validation_image as probe
+        class Inspected(Exception):pass
+        with tempfile.TemporaryDirectory() as work:
+            def inspect_context(args,**kwargs):
+                context=Path(args[-1])
+                recipe=(context/'build/Dockerfile').read_text()
+                line=next(line for line in recipe.splitlines() if line.startswith('COPY scripts/') and '/work/project/scripts/' in line)
+                missing=[name for name in line.split()[1:-1] if not (context/name).is_file()]
+                self.assertEqual(missing,[],'isolated probe context omits Dockerfile source dependencies')
+                raise Inspected()
+            with mock.patch.object(sys,'argv',['probe','--builder','fixture','--output',str(Path(work)/'out')]), \
+                 mock.patch.object(probe.build,'run',side_effect=inspect_context):
+                with self.assertRaises(Inspected):probe.main()
+
     def inputs(self):
         lock = json.loads((ROOT/'versions.arm64.lock.json').read_text())
         custom = 'ghcr.io/example/extension@sha256:'+'a'*64
@@ -44,6 +59,7 @@ class OracleInputsTests(unittest.TestCase):
     def test_profile_is_oracle_arm64_raw_small_scratch_and_exact_console_only(self):
         lock,record,_ = self.inputs();p = oracle.profile(record['installers'][0],False)
         self.assertEqual((p['baseProfileName'],p['arch'],p['platform']),('oracle','arm64','oracle'))
+        self.assertEqual(p['version'],'v'+lock['talos'])
         self.assertEqual(p['customization'],{'extraKernelArgs':['console=ttyAMA0,9600']})
         self.assertLess(p['output']['imageOptions']['diskSize'],8*1024**3)
         self.assertEqual(p['input']['systemExtensions'],[{'imageRef':x} for x in record['installers'][0]['extensions']])
@@ -99,6 +115,14 @@ class OracleInputsTests(unittest.TestCase):
 
 
 class OracleFormatTests(unittest.TestCase):
+    def test_uki_version_os_release_and_kernel_release_match_standard(self):
+        sections={'.osrel':b'NAME="Talos"\nVERSION_ID=v1.12.6\n','.uname':b'6.18.14-talos\0'}
+        result=inspect.uki_identity('Talos-v1.12.6.efi',sections,sections,'1.12.6')
+        self.assertEqual(result['kernel_release'],'6.18.14-talos')
+        for name,changed in [('Talos-1.12.6.efi',sections),('Talos-v1.12.6.efi',dict(sections,**{'.uname':b''})),
+                             ('Talos-v1.12.6.efi',dict(sections,**{'.osrel':b'VERSION_ID=1.12.6\n'}))]:
+            with self.subTest(name=name),self.assertRaises(ValueError):inspect.uki_identity(name,changed,sections,'1.12.6')
+
     def test_only_observed_talos_tmp_sticky_normalization_is_allowed_and_reported(self):
         path='usr/local/lib/containers/sysbox-fs/tmp'
         expected={path:('directory',0o1777,'')};actual={path:('directory',0o777,'')}
@@ -145,7 +169,7 @@ class OracleFormatTests(unittest.TestCase):
 
 
 class OracleReleaseTests(unittest.TestCase):
-    def fixture(self,root,image=None):
+    def fixture(self,root,image=None,boot='NOT_RUN'):
         lock,record,_=OracleInputsTests().inputs();dest=root/'oracle';dest.mkdir()
         if image:record['installers'][0]['image']=image
         files={}
@@ -156,7 +180,7 @@ class OracleReleaseTests(unittest.TestCase):
             if suffix!='.qcow2':
                 path=dest/name;path.write_bytes(b'x');artifacts[name]['sha256']=file_sha256(path)
         validation={k:'PASS' for k in ('generation','qcow2_check','exact_capacity','backing_free','guest_content_compare','partition_preservation','compressed_roundtrip','static_boot_assets')}
-        validation.update(OCI='NOT_RUN',sysbox_arm64='UNRUN',docker_in_sysbox='UNRUN',kind='UNRUN')
+        validation.update(OCI='NOT_RUN',boot=boot,sysbox_arm64='UNRUN',docker_in_sysbox='UNRUN',kind='UNRUN')
         metadata={'schema_version':1,'architecture':'arm64','platform':'oracle','variant':'standard','standard':record['installers'][0],
                   'extensions':record['installers'][0]['extensions'],'talos':lock['talos'],'sysbox':lock['sysbox'],
                   'validation':validation,'artifacts':artifacts}
@@ -204,6 +228,11 @@ class OracleReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             root=Path(work);record=self.fixture(root);record['installers'][0]['extensions'][0]='wrong'
             with self.assertRaisesRegex(RuntimeError,'Standard inputs'):disks.disk_paths(record,root)
+
+    def test_consistently_hashed_boot_pass_claim_is_rejected(self):
+        with tempfile.TemporaryDirectory() as work:
+            root=Path(work);record=self.fixture(root,boot='PASS')
+            with self.assertRaisesRegex(RuntimeError,'exceeds this build scope'):disks.disk_paths(record,root)
 
 
 if __name__=='__main__':unittest.main()

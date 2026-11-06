@@ -96,6 +96,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: standard-oracle-arm64
+          include-hidden-files: true
           retention-days: 14
           compression-level: 0
           path: .build/oracle/*

@@ -42,7 +42,8 @@ def disk_paths(inputs, directory):
                  'partition_preservation','compressed_roundtrip','static_boot_assets'):
         if validation.get(name) != 'PASS':
             raise RuntimeError('Incomplete Oracle validation: '+name)
-    if validation.get('OCI') != 'NOT_RUN' or any(validation.get(k) != 'UNRUN' for k in ('sysbox_arm64','docker_in_sysbox','kind')):
+    if (validation.get('OCI') != 'NOT_RUN' or validation.get('boot') != 'NOT_RUN' or
+        any(validation.get(k) != 'UNRUN' for k in ('sysbox_arm64','docker_in_sysbox','kind'))):
         raise RuntimeError('Oracle/runtime validation exceeds this build scope')
     expected_names = {PREFIX+s for s in ('.qcow2','.vmdk','.qcow2.zst')}
     if set(metadata['artifacts']) != expected_names:

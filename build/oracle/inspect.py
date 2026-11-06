@@ -210,6 +210,17 @@ def compare_inventory(actual, original):
     return differences
 
 
+def uki_identity(filename, sections, baseline, talos):
+    version = 'v'+talos
+    require(filename == 'Talos-'+version+'.efi', 'unexpected UKI version filename')
+    osrel = sections.get('.osrel',b'').rstrip(b'\0')
+    uname = sections.get('.uname',b'').rstrip(b'\0')
+    require(osrel == baseline.get('.osrel',b'').rstrip(b'\0') and
+            ('VERSION_ID='+version) in osrel.decode().splitlines(), 'UKI OS release differs from Standard/version')
+    require(bool(uname) and uname == baseline.get('.uname',b'').rstrip(b'\0'), 'UKI kernel release differs from Standard')
+    return dict(os_release=osrel.decode(), kernel_release=uname.decode(), sections=sorted(sections))
+
+
 def boot_assets(raw, table, directory):
     import yaml
     efi = table['partitions'][0]
@@ -238,6 +249,8 @@ def boot_assets(raw, table, directory):
             if path.name == 'boot.efi':
                 continue
             data = path.read_bytes(); sections = pe(data)
+            talos = json.loads((directory/'build-metadata.json').read_text())['inputs']['talos']
+            identity = uki_identity(path.name,sections,baseline_uki,talos)
             args = shlex.split(sections['.cmdline'].rstrip(b'\0').decode())
             require([x for x in args if x.startswith('console=')] == ['console=ttyAMA0,9600'], 'console mismatch')
             require('talos.platform=oracle' in args, 'wrong platform in UKI')
@@ -282,7 +295,7 @@ def boot_assets(raw, table, directory):
                                        rootfs_entries=len(actual), input_content_comparison='PASS',
                                        standard_installer_payload_comparison='PASS',
                                        mode_differences=mode_differences))
-            ukis.append(dict(file=path.name, sha256=sha(path), cmdline=args, kernel_format=kernel_format,
+            ukis.append(dict(file=path.name, sha256=sha(path), cmdline=args, kernel_format=kernel_format, **identity,
                              kernel_sha256=hashlib.sha256(kernel).hexdigest(), initrd_sha256=hashlib.sha256(sections['.initrd']).hexdigest(),
                              initrd_compression=compression, extensions=extensions))
         require(ukis, 'no UKI on EFI partition')

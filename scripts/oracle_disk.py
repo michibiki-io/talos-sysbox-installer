@@ -69,7 +69,7 @@ def verify_layout(directory, digest):
 def profile(standard, layout):
     extensions = [({'ociPath':'/input/extension-oci'} if layout and i == 0 else {'imageRef':fixed(ref)})
                   for i,ref in enumerate(standard['extensions'])]
-    return {'baseProfileName':'oracle', 'arch':'arm64', 'platform':'oracle', 'version':standard['talos'],
+    return {'baseProfileName':'oracle', 'arch':'arm64', 'platform':'oracle', 'version':'v'+standard['talos'],
             'input':{'baseInstaller':{'imageRef':fixed(standard['base_installer'])}, 'systemExtensions':extensions},
             'customization':{'extraKernelArgs':['console=ttyAMA0,9600']},
             'output':{'kind':'image','outFormat':'raw','imageOptions':{'diskSize':2*1024**3,'diskFormat':'raw','bootloader':'sd-boot'}}}
@@ -90,11 +90,13 @@ def container_limits():
 
 def generator_permissions():
     # Private /dev (Docker's normal device namespace), no host /dev bind.
-    # Block major numbers for kernel-assigned loop partitions are dynamic;
-    # only the launcher-created, proven-owned device nodes are visible.
+    # Linux loop devices use major 7; extended partitions use BLOCK_EXT_MAJOR
+    # 259. The latter also covers NVMe, so private node visibility and backing
+    # ownership checks remain necessary; no host /dev is exposed.
     return ['--cap-drop','ALL','--cap-add','SYS_ADMIN','--cap-add','MKNOD','--cap-add','DAC_OVERRIDE',
             '--cap-add','CHOWN','--cap-add','FOWNER','--security-opt','apparmor=unconfined',
-            '--device-cgroup-rule','c 10:237 rwm','--device-cgroup-rule','b *:* rwm']
+            '--device-cgroup-rule','c 10:237 rwm','--device-cgroup-rule','b 7:* rwm',
+            '--device-cgroup-rule','b 259:* rwm']
 
 
 def reconcile_container(name):
