@@ -71,9 +71,15 @@ class UbuntuSourcesTests(unittest.TestCase):
         response=io.BytesIO(self.data)
         response.geturl=lambda:'https://launchpadlibrarian.net/123/dash_1.dsc'
         missing=urllib.error.HTTPError(record['url'],404,'Not Found',{},None)
+        unavailable=subprocess.CalledProcessError(100,[],output='503 Service Unavailable\n')
         with tempfile.TemporaryDirectory() as work,mock.patch.object(
-                sources.urllib.request,'urlopen',side_effect=[missing,response]) as fetch:
-            sources.download_exact(record,Path(work),['dash=1:1+ubuntu1'])
+                sources.urllib.request,'urlopen',side_effect=[missing,response]) as fetch, \
+             mock.patch.object(sources.subprocess,'run',side_effect=[unavailable,None]) as apt, \
+             mock.patch.object(sources.subprocess,'check_output',return_value=self.uri()):
+            used=sources.download(['dash=1:1+ubuntu1'],Path(work),self.snapshot)
+            record,=used
+            self.assertEqual((Path(work)/record['file']).read_bytes(),self.data)
+            self.assertEqual(apt.call_args_list[0].args,apt.call_args_list[1].args)
             self.assertEqual(fetch.call_args.args[0],
                 'https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dash/1%3A1%2Bubuntu1/dash_1.dsc')
             self.assertEqual(record['url'],'https://launchpadlibrarian.net/123/dash_1.dsc')
