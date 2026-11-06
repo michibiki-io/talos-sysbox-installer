@@ -10,6 +10,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from disk_artifacts import disk_record
 
 
 def anonymous_digest(image, expected_config=None):
@@ -81,12 +84,17 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
         if preflight_only:
             return {'preflight': True, 'inputs': copy.deepcopy(inputs)}
         results = {arch: publish_images(target, verify_existing) for arch, target in targets.items()}
-        return {'schema_version': 2, 'images': [image for result in results.values() for image in result['images']],
+        result = {'schema_version': 2, 'images': [image for result in results.values() for image in result['images']],
                 'inputs': {'schema_version': 2, 'architectures': {arch: result['inputs'] for arch, result in results.items()}},
                 'test_image_locks': {arch: result['test_image_lock'] for arch, result in results.items() if 'test_image_lock' in result},
                 'licenses': 'See amd64-build-metadata.json, arm64-build-metadata.json and /usr/local/share/licenses/talos-sysbox in each extension.',
                 'corresponding_source': 'amd64-sources.tar.gz and arm64-sources.tar.gz contain matching sources for each target.'}
+        disks = [copy.deepcopy(result['disk_artifacts']) for result in results.values() if 'disk_artifacts' in result]
+        if disks:
+            result['disk_artifacts'] = disks
+        return result
     arch = inputs.get('architecture', 'amd64')
+    disks = disk_record(inputs)
     if arch not in ('amd64', 'arm64'):
         raise RuntimeError('unsupported release architecture')
     images=[inputs['extension']['image'],*(i['image'] for i in inputs['installers'])]
@@ -145,6 +153,8 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
         for key in ('local_tag','archive','archive_sha256','docker_archive','docker_archive_sha256'):
             probe.pop(key, None)
         result['test_image_lock']=test_lock
+    if disks is not None:
+        result['disk_artifacts']=copy.deepcopy(disks)
     return result
 
 

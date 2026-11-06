@@ -41,6 +41,8 @@ Use `--output DIR` to choose a separate output directory. Both installer variant
 The amd64 tag remains `v<project-version>-talos-v<talos-version>`; ARM64 appends `-arm64` for every image, including the probe.
 These are separate single-platform tags. Select the release image record whose `architecture` matches the node; do not use an amd64 digest on ARM64.
 
+New releases also provide [Standard Oracle ARM64 boot disks](docs/oracle-disks.md): compressed QCOW2 and standalone streamOptimized VMDK, each exactly 50 GiB virtual capacity, with input records and checksums. OCI boot and ARM64 Sysbox runtime remain unverified; see the linked generation/download and isolation procedures.
+
 Test and release builds run on native runners: `ACTIONS_RUNNER` for amd64 (fallback `ubuntu-latest`) and `ACTIONS_RUNNER_ARM64` for ARM64 (fallback `ubuntu-24.04-arm`). Fork PRs always use the corresponding GitHub-hosted runner.
 Build-embedded supervisor/unit/upstream checks, including kernel/seccomp checks, helper rejection and version identity checks retain identical fail-closed rules on both targets.
 They do not establish Talos runtime behavior. **ARM64 runtime verification is UNRUN and is performed separately.**
@@ -270,6 +272,8 @@ Docker の恒久設定は変更しません。
 イメージ名は英語節の表を参照してください。
 amd64 のタグは `v<project-version>-talos-v<talos-version>`、ARM64 は末尾に `-arm64` を付けます。
 probe を含むすべてのイメージをアーキテクチャ別の単一 platform tag に分けます。
+
+新しいリリースでは [Standard Oracle ARM64 起動ディスク](docs/oracle-disks.md) も配布します。圧縮 QCOW2 と standalone streamOptimized VMDK の仮想容量は各 50 GiB で、入力記録とチェックサムを併配します。生成と取得の手順、特権の範囲、未実施の OCI 起動と ARM64 Sysbox runtime 検証はリンク先を参照してください。
 プロジェクトの semantic version、Talos 版、Sysbox 版は別々に管理します。
 公式 extension は対象 Talos の catalogue にある digest を直接使用します。
 自作 extension は OCI layout として imager に渡すため、ローカル insecure registry を必要としません。

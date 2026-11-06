@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from build import archive_config_digest, file_sha256, archive_platform
+from disk_artifacts import disk_record, disk_paths, release_asset_name
 
 ARCHIVES=('extension.tar','standard-image.tar','vmware-image.tar')
 
@@ -29,10 +30,13 @@ def targets(inputs):
 def asset_names(inputs):
     records = targets(inputs)
     if records is not None:
-        return [arch + '-' + name for arch, record in records.items() for name in asset_names(record)]
+        return [release_asset_name(arch, Path(name)) for arch, record in records.items() for name in asset_names(record)]
     names = ['sources.tar.gz', 'build-metadata.json', *ARCHIVES]
     if 'probe' in inputs:
         names.append('probe-image.tar')
+    disks = disk_record(inputs)
+    if disks is not None:
+        names.extend(disks['files'])
     return names
 
 
@@ -72,7 +76,7 @@ def validate_assets(inputs,directory):
     if records is not None:
         return [path for arch, record in records.items() for path in validate_assets(record, directory / arch)]
     paths=validate_archives(inputs,directory)
-    assets=[directory/'sources.tar.gz',directory/'evidence/build-metadata.json',*paths]
+    assets=[directory/'sources.tar.gz',directory/'evidence/build-metadata.json',*paths,*disk_paths(inputs,directory)]
     if any(not p.is_file() or p.stat().st_size>=2*1024**3 for p in assets):raise RuntimeError('Missing or oversized release asset')
     return assets
 
@@ -90,7 +94,7 @@ def stage(repo,tag,directory,preflight):
         renamed = []
         for arch, record in records.items():
             for path in validate_assets(record, directory / arch):
-                target = export / (arch + '-' + path.name)
+                target = export / release_asset_name(arch,path)
                 target.unlink(missing_ok=True)
                 os.link(path, target)
                 renamed.append(target)

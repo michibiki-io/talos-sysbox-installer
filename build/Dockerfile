@@ -33,7 +33,7 @@ COPY build/ /work/project/build/
 COPY supervisor/ /work/project/supervisor/
 COPY versions.lock.json /work/project/versions.lock.json
 COPY LICENSE /work/project/LICENSE
-COPY scripts/build.py scripts/publish.py scripts/build_validation_image.py scripts/update_proc_transfer.py scripts/proc_transfer_operator.py /work/project/scripts/
+COPY scripts/build.py scripts/publish.py scripts/build_validation_image.py scripts/update_proc_transfer.py scripts/proc_transfer_operator.py scripts/oracle_disk.py scripts/disk_artifacts.py /work/project/scripts/
 ARG GENERATE_MODULE_LOCKS=0
 ENV GENERATE_MODULE_LOCKS=$GENERATE_MODULE_LOCKS
 RUN --mount=type=cache,id=talos-sysbox-installer-sources,target=/source-cache --mount=type=cache,id=talos-sysbox-installer-go-modules,target=/root/go/pkg/mod --mount=type=cache,id=talos-sysbox-installer-go-build,target=/root/.cache/go-build python3 /work/assemble.py
