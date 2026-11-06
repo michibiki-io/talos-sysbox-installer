@@ -83,18 +83,20 @@ class UbuntuSourcesTests(unittest.TestCase):
             self.assertEqual(fetch.call_args.args[0],
                 'https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dash/1%3A1%2Bubuntu1/dash_1.dsc')
             self.assertEqual(record['url'],'https://launchpadlibrarian.net/123/dash_1.dsc')
+            self.assertEqual(record['publication_url'],fetch.call_args.args[0])
             self.assertEqual(record['sha256'],hashlib.sha256(self.data).hexdigest())
             self.assertIn('archive.ubuntu.com',record['archive_url'])
 
     def test_publication_fallback_rejects_unknown_source_other_http_errors_and_wrong_bytes(self):
-        for status,specs,data in ((403,['dash=1'],self.data),(404,['other=1'],self.data),
-                                  (404,['dash=1','dash=2'],self.data),(404,['dash=1'],b'x'*len(self.data))):
+        for status,specs,data,expected_error in ((403,['dash=1'],self.data,urllib.error.HTTPError),
+                (404,['other=1'],self.data,ValueError),(404,['dash=1','dash=2'],self.data,ValueError),
+                (404,['dash=1'],b'x'*len(self.data),ValueError)):
             record,=sources.archive_inputs(self.uri(),self.snapshot)
             response=io.BytesIO(data);response.geturl=lambda:'https://launchpadlibrarian.net/123/dash_1.dsc'
             error=urllib.error.HTTPError(record['url'],status,'failed',{},None)
             with self.subTest(status=status,specs=specs),tempfile.TemporaryDirectory() as work,mock.patch.object(
                     sources.urllib.request,'urlopen',side_effect=[error,response]) as fetch:
-                with self.assertRaises((ValueError,urllib.error.HTTPError)):
+                with self.assertRaises(expected_error):
                     sources.download_exact(record,Path(work),specs)
                 self.assertEqual(list(Path(work).iterdir()),[])
                 self.assertEqual(fetch.call_count,2 if status==404 and specs==['dash=1'] else 1)
