@@ -53,7 +53,6 @@ jobs:
       packages: write
       pull-requests: read
     uses: ./.github/workflows/release-native.yml
-    secrets: inherit
     with:
       pr_number: ${{ needs.prepare.outputs.pr_number }}
       base_ref: ${{ needs.prepare.outputs.base_ref }}

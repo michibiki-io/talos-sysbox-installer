@@ -124,6 +124,26 @@ class ArchitectureTests(unittest.TestCase):
                 (root/'artifacts.lock.json').write_text(json.dumps(lock))
                 with self.assertRaisesRegex(ValueError, 'ABI'): launcher.verify_artifacts(root)
 
+    def test_launcher_rejects_host_artifact_and_probe_architecture_mismatches(self):
+        launcher = proc_fixtures.OperatorContracts.module('host_launcher', 'build/runtime_launcher.py')
+        for machine, arch in [('x86_64', 'amd64'), ('aarch64', 'arm64')]:
+            wrong = 'arm64' if arch == 'amd64' else 'amd64'
+            for artifact_arch, probe_arch in [(wrong, arch), (arch, wrong)]:
+                with self.subTest(host=arch, artifact=artifact_arch, probe=probe_arch), tempfile.TemporaryDirectory() as work:
+                    image_lock = Path(work)/'image-lock.json'
+                    image_lock.write_text(json.dumps({'validation_artifacts_lock_sha256': 'a'*64,
+                        'test_images': {'proc_transfer_probe': {'architecture': probe_arch}}}))
+                    with mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
+                         mock.patch.object(launcher.os, 'geteuid', return_value=0), \
+                         mock.patch.object(launcher.os, 'uname', return_value=SimpleNamespace(machine=machine)), \
+                         mock.patch.object(launcher, 'trusted_host_namespaces', return_value={}), \
+                         mock.patch.object(launcher, 'verify_artifacts', return_value={'architecture': artifact_arch}), \
+                         mock.patch.object(launcher, 'digest', return_value='a'*64), \
+                         mock.patch.object(launcher.subprocess, 'check_output') as commands:
+                        with self.assertRaisesRegex(ValueError, 'trusted host architecture'):
+                            launcher.run(SimpleNamespace(image_lock=image_lock))
+                        commands.assert_not_called()
+
     def test_extension_rejects_architecture_mismatch_even_with_matching_payload_hashes(self):
         with tempfile.TemporaryDirectory() as work:
             path, metadata = proc_fixtures.Integration().image_archive(work)
@@ -188,6 +208,8 @@ class MultiArchitectureReleaseTests(unittest.TestCase):
                 result = publish.publish_images(inputs)
                 self.assertEqual(run.call_count, 8)
             self.assertEqual({i['architecture'] for i in result['images']}, {'amd64', 'arm64'})
+            self.assertIn('amd64-build-metadata.json', result['licenses'])
+            self.assertIn('arm64-build-metadata.json', result['licenses'])
             for arch, lock in result['test_image_locks'].items():
                 self.assertEqual(lock['test_images']['proc_transfer_probe']['architecture'], arch)
                 self.assertTrue(lock['test_images']['proc_transfer_probe']['anonymous_pull_verified'])
@@ -223,6 +245,78 @@ class MultiArchitectureReleaseTests(unittest.TestCase):
                 self.assertEqual(len(loads), 8)
                 self.assertIn('reuse=true', (root/'output').read_text())
             finally: os.chdir(previous)
+
+    def test_legacy_amd64_reuse_without_architecture_key_keeps_unprefixed_assets(self):
+        for with_probe in (False, True):
+            with self.subTest(probe=with_probe), tempfile.TemporaryDirectory() as work:
+                root = Path(work); source = root/'source'; source.mkdir()
+                helper = fixtures.BuildTests()
+                inputs = helper.probe_inputs(source) if with_probe else helper.original_archives(source)
+                inputs.pop('architecture')
+                names = [*stage.ARCHIVES, *(['probe-image.tar'] if with_probe else [])]
+                original = {name: (source/name).read_bytes() for name in names}
+                release = {'draft': False, 'assets': [{'name': n} for n in ['images.json', *stage.asset_names(inputs)]]}
+                destination = root/'restore'; destination.mkdir(); previous = Path.cwd()
+                def run(args, **kw):
+                    if args[:3] != ['gh', 'release', 'download']: return
+                    directory = Path(args[args.index('--dir')+1]); name = args[args.index('--pattern')+1]
+                    self.assertIn(name, ['images.json', *names])
+                    if name == 'images.json': (directory/name).write_text(json.dumps(inputs))
+                    else: (directory/name).write_bytes(original[name])
+                try:
+                    os.chdir(destination)
+                    with mock.patch.object(sys, 'argv', ['reuse', '--tag', 'v0.1.0']), \
+                         mock.patch.dict(os.environ, {'GITHUB_REPOSITORY': 'example/repo', 'GITHUB_OUTPUT': str(root/'output')}), \
+                         mock.patch.object(reuse, 'find_release', return_value=release), \
+                         mock.patch.object(reuse.subprocess, 'run', side_effect=run) as calls:
+                        reuse.main()
+                    loads = [c.args[0] for c in calls.call_args_list if c.args[0][:2] == ['docker', 'load']]
+                    self.assertEqual(len(loads), len(names))
+                    self.assertEqual({Path(c[-1]) for c in loads}, {Path('.build')/name for name in names})
+                    self.assertNotIn('architecture', json.loads(Path('.build/images.json').read_text()))
+                finally: os.chdir(previous)
+
+    def test_inspect_only_reports_staged_and_completed_without_download_or_load(self):
+        for completed in (False, True):
+            with self.subTest(completed=completed), tempfile.TemporaryDirectory() as work:
+                root = Path(work); previous = Path.cwd()
+                names = ['images.json'] + (['release-images.json'] if completed else [])
+                release = {'draft': not completed, 'assets': [{'name': n} for n in names]}
+                try:
+                    os.chdir(root)
+                    with mock.patch.object(sys, 'argv', ['reuse', '--tag', 'v0.1.0', '--inspect-only']), \
+                         mock.patch.dict(os.environ, {'GITHUB_REPOSITORY': 'example/repo', 'GITHUB_OUTPUT': str(root/'output')}), \
+                         mock.patch.object(reuse, 'find_release', return_value=release), \
+                         mock.patch.object(reuse.subprocess, 'run') as commands, \
+                         mock.patch.object(reuse, 'restore_images') as restore:
+                        reuse.main()
+                        commands.assert_not_called(); restore.assert_not_called()
+                    self.assertFalse(Path('.build').exists())
+                    self.assertEqual((root/'output').read_text(), 'reuse=true\ncompleted='+str(completed).lower()+'\n')
+                finally: os.chdir(previous)
+
+    def test_v2_published_and_partial_release_reuse_preserves_existing_images(self):
+        with tempfile.TemporaryDirectory() as work:
+            inputs = self.inputs(Path(work))
+            configs = {image: digest for target in inputs['architectures'].values() for image, digest in target['image_config_digests'].items()}
+            def existing(image): return {'config': {'digest': configs[image]}}
+            with mock.patch.object(publish, 'existing_manifest', side_effect=existing), \
+                 mock.patch.object(publish, 'anonymous_digest', return_value='sha256:'+'a'*64), \
+                 mock.patch.object(publish.subprocess, 'check_output') as loaded, \
+                 mock.patch.object(publish.subprocess, 'run') as push:
+                result = publish.publish_images(inputs, verify_existing=True)
+                self.assertEqual(len(result['images']), 8)
+                push.assert_not_called(); loaded.assert_not_called()
+            def output(args, **kw): return '[]' if args[1] == 'info' else configs[args[-1]]
+            def partial(image): return None if image.endswith('-arm64') else existing(image)
+            with mock.patch.object(publish, 'existing_manifest', side_effect=partial), \
+                 mock.patch.object(publish, 'anonymous_digest', return_value='sha256:'+'a'*64), \
+                 mock.patch.object(publish.subprocess, 'check_output', side_effect=output), \
+                 mock.patch.object(publish.subprocess, 'run') as push:
+                result = publish.publish_images(inputs)
+                self.assertEqual(len(result['images']), 8)
+                self.assertEqual(push.call_count, 4)
+                self.assertTrue(all(c.args[0][-1].endswith('-arm64') for c in push.call_args_list))
 
 
 if __name__ == '__main__': unittest.main()

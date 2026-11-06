@@ -70,7 +70,7 @@ Select an existing Buildx instance with `--builder NAME`.
 | `ghcr.io/michibiki-io/talos-sysbox-installer-standard` | Sysbox, iscsi-tools, util-linux-tools |
 | `ghcr.io/michibiki-io/talos-sysbox-installer-vmware` | Standard set plus vmtoolsd-guest-agent |
 
-All tags have the form `v<project-version>-talos-v<talos-version>`, for example `v0.2.0-talos-v1.12.6`.
+amd64 tags have the form `v<project-version>-talos-v<talos-version>`, for example `v0.2.0-talos-v1.12.6`; ARM64 tags append `-arm64`.
 Project semver describes this repository; Talos and Sysbox retain their independent upstream versions.
 Official extensions are consumed directly by digest from the catalogue for the selected Talos release.
 The custom extension is passed to imager through an OCI layout, avoiding a local insecure registry.
@@ -79,13 +79,13 @@ Generated archives are retagged before loading so they never overwrite or publis
 Local composition records label the custom manifest as `oci-layout@sha256:…`.
 Publication replaces that local reference with the anonymously verified GHCR manifest digest; the two digests need not match.
 
-Outputs under `.build/` include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
+Outputs under `.build/` (amd64) or `.build/arm64/` (ARM64) include all three loaded images, `images.json`, each installer's `inputs.json`, `evidence/build-metadata.json` and `sources.tar.gz`.
 To customize the shared extension list, copy the lock, edit `standard_extensions` and add catalogue-approved digest pins to `extensions`, then use `--lock FILE`.
 The VMware agent is reserved for the VMware variant.
 Build and source-inventory JSON use stable key ordering. Fixed inputs and repeatable runtime payloads do not guarantee identical OCI/image digests across builders: image/layer timestamps and exporter details may differ. Preserve original release archives for retries rather than rebuilding an existing version tag.
 Use the same `--lock FILE` for either runtime validation runner; the selected lock is included as `project/versions.lock.json` in the corresponding-source archive.
 The validation client is deliberately locked to talosctl 1.13.5 while the target OS remains Talos 1.12.6. Its Docker-cluster provisioning/runtime checks and read-only 1.12.6 API preflight have been exercised; upgrade/reboot compatibility must be recorded by real-node validation separately. Changing the client requires repeating those checks.
-CI sends fork PRs to GitHub-hosted runners. A configured `ACTIONS_RUNNER` override for trusted branches must identify a disposable, isolated runner with no production credentials or workloads.
+CI sends fork PRs to GitHub-hosted runners. A configured `ACTIONS_RUNNER` or `ACTIONS_RUNNER_ARM64` override for trusted branches must identify a disposable, isolated runner with no production credentials or workloads.
 Any new Talos release requires explicit compatibility validation before changing the manifest constraint.
 
 ### Installation and runtime opt-in
@@ -283,7 +283,7 @@ VMware agent は VMware 版だけに含めます。
 ビルドと source inventory の JSON は key 順序を固定します。固定入力と同じ runtime payload を再生成できることは、builder 間の OCI／image digest の完全一致を保証しません。image／layer の timestamp や exporter の違いが残るため、既存 version tag の再ビルドではなく元の release archive を使って復旧します。
 runtime 検証 runner にも同じ `--lock FILE` を指定します。対応ソースの archive には、選択した lock を `project/versions.lock.json` として保存します。
 検証 client は talosctl 1.13.5、対象 OS は Talos 1.12.6 に固定しています。Docker クラスタ作成・runtime 検証と 1.12.6 API の読み取り preflight を確認しています。実ノードの更新・再起動の互換確認は別に記録し、client 更新時にこれらを再確認します。
-CI は fork PR を GitHub-hosted runner で実行します。信頼したブランチで `ACTIONS_RUNNER` を指定する場合も、production 資格情報や workload を持たない隔離された使い捨て runner に限ります。
+CI は fork PR を GitHub-hosted runner で実行します。信頼したブランチで `ACTIONS_RUNNER` または `ACTIONS_RUNNER_ARM64` を指定する場合も、production 資格情報や workload を持たない隔離された使い捨て runner に限ります。
 Talos 互換指定を広げる前に、新しい版で検証してください。
 
 ARM64 ホストでは `python3 scripts/build.py --version 0.2.0 --arch arm64 --with-probe` でビルドします。

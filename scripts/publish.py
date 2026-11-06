@@ -84,6 +84,7 @@ def publish_images(inputs, verify_existing=False, preflight_only=False):
         return {'schema_version': 2, 'images': [image for result in results.values() for image in result['images']],
                 'inputs': {'schema_version': 2, 'architectures': {arch: result['inputs'] for arch, result in results.items()}},
                 'test_image_locks': {arch: result['test_image_lock'] for arch, result in results.items() if 'test_image_lock' in result},
+                'licenses': 'See amd64-build-metadata.json, arm64-build-metadata.json and /usr/local/share/licenses/talos-sysbox in each extension.',
                 'corresponding_source': 'amd64-sources.tar.gz and arm64-sources.tar.gz contain matching sources for each target.'}
     arch = inputs.get('architecture', 'amd64')
     if arch not in ('amd64', 'arm64'):
