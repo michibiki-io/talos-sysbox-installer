@@ -28,8 +28,10 @@ class UbuntuSourcesTests(unittest.TestCase):
             with self.subTest(text=text),self.assertRaises(ValueError):sources.archive_inputs(text,self.snapshot)
 
     def test_successful_apt_has_no_fallback_or_source_input_changes(self):
-        with mock.patch.object(sources.subprocess,'run') as apt,mock.patch.object(sources.subprocess,'check_output') as uris:
+        with mock.patch.object(sources.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'download log\n','retry log\n')) as apt, \
+             mock.patch.object(sources.subprocess,'check_output') as uris,mock.patch('sys.stdout',new_callable=io.StringIO) as log:
             self.assertEqual(sources.download(['dash=1'],Path('/sources'),self.snapshot),[])
+            self.assertIn('download log',log.getvalue());self.assertIn('retry log',log.getvalue())
             apt.assert_called_once();uris.assert_not_called()
             self.assertEqual(apt.call_args.args[0],['sh','/work/apt_retry.sh','source','--download-only','dash=1'])
 
@@ -53,6 +55,15 @@ class UbuntuSourcesTests(unittest.TestCase):
             self.assertEqual(apt.call_count,2);self.assertEqual(apt.call_args_list[0].args,apt.call_args_list[1].args)
             self.assertTrue(fetch.call_args.args[0].startswith('https://archive.ubuntu.com/'))
             self.assertEqual(len(list(root.iterdir())),1)
+
+    def test_signed_sha512_is_verified_and_sha256_is_also_recorded(self):
+        text=self.uri().replace('SHA256:'+hashlib.sha256(self.data).hexdigest(),
+                                'SHA512:'+hashlib.sha512(self.data).hexdigest())
+        record,=sources.archive_inputs(text,self.snapshot)
+        with tempfile.TemporaryDirectory() as work,mock.patch.object(sources.urllib.request,'urlopen',return_value=io.BytesIO(self.data)):
+            self.assertTrue(sources.download_exact(record,Path(work)))
+            self.assertEqual(record['sha512'],hashlib.sha512(self.data).hexdigest())
+            self.assertEqual(record['sha256'],hashlib.sha256(self.data).hexdigest())
 
     def test_wrong_archive_hash_size_or_existing_bytes_fail_closed(self):
         record,=sources.archive_inputs(self.uri(),self.snapshot)

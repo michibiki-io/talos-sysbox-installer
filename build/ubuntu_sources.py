@@ -12,7 +12,7 @@ import urllib.request
 
 
 def archive_inputs(text, snapshot):
-    """Only apt's SHA256/size records from the selected snapshot are eligible."""
+    """Only apt's strong hash/size records from the selected snapshot qualify."""
     prefix = '/ubuntu/'+snapshot+'/pool/'
     records = {}
     for line in text.splitlines():
@@ -23,15 +23,18 @@ def archive_inputs(text, snapshot):
             raise ValueError('invalid apt source URI record')
         uri,name,size,checksum = fields
         url = urllib.parse.urlsplit(uri)
+        kind,_,digest = checksum.partition(':')
         if (url.scheme not in ('http','https') or url.netloc != 'snapshot.ubuntu.com' or
             not url.path.startswith(prefix) or url.query or url.fragment or
             Path(name).name != name or name in ('.','..') or
             urllib.parse.unquote(url.path.rsplit('/',1)[-1]) != name or
             any(p in ('.','..') for p in urllib.parse.unquote(url.path).split('/')) or
-            not re.fullmatch(r'SHA256:[0-9a-f]{64}',checksum) or not size.isdigit() or int(size) <= 0):
-            raise ValueError('source URI is not bound to signed snapshot SHA256/size')
+            not ((kind == 'SHA256' and re.fullmatch(r'[0-9a-f]{64}',digest)) or
+                 (kind == 'SHA512' and re.fullmatch(r'[0-9a-f]{128}',digest))) or
+            not size.isdigit() or int(size) <= 0):
+            raise ValueError('source URI is not bound to signed snapshot strong hash/size (hash type '+kind+')')
         record = {'snapshot_uri':uri,'url':'https://archive.ubuntu.com/ubuntu/pool/'+url.path[len(prefix):],
-                  'file':name,'bytes':int(size),'sha256':checksum[7:]}
+                  'file':name,'bytes':int(size),kind.lower():digest}
         if name in records and records[name] != record:
             raise ValueError('conflicting apt source record')
         records[name] = record
@@ -42,14 +45,16 @@ def archive_inputs(text, snapshot):
 
 def download_exact(record, directory):
     target = directory/record['file']
+    algorithm = 'sha512' if 'sha512' in record else 'sha256'
     if target.exists():
-        if target.is_symlink() or target.stat().st_size != record['bytes'] or hashlib.sha256(target.read_bytes()).hexdigest() != record['sha256']:
+        if target.is_symlink() or target.stat().st_size != record['bytes'] or hashlib.new(algorithm,target.read_bytes()).hexdigest() != record[algorithm]:
             raise ValueError('existing source file differs from signed snapshot')
+        record['sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
         return False
     with tempfile.NamedTemporaryFile(dir=directory, prefix='.ubuntu-source-', delete=False) as f:
         temporary = Path(f.name)
         try:
-            h = hashlib.sha256(); total = 0
+            h = hashlib.new(algorithm); sha256 = hashlib.sha256(); total = 0
             context = ssl.create_default_context(cafile='/etc/ssl/certs/ca-certificates.crt')
             with urllib.request.urlopen(record['url'],timeout=120,context=context) as response:
                 while True:
@@ -59,9 +64,10 @@ def download_exact(record, directory):
                     total += len(chunk)
                     if total > record['bytes']:
                         raise ValueError('Ubuntu source exceeds signed size')
-                    f.write(chunk);h.update(chunk)
-            if total != record['bytes'] or h.hexdigest() != record['sha256']:
-                raise ValueError('Ubuntu source SHA256/size mismatch')
+                    f.write(chunk);h.update(chunk);sha256.update(chunk)
+            if total != record['bytes'] or h.hexdigest() != record[algorithm]:
+                raise ValueError('Ubuntu source strong hash/size mismatch')
+            record['sha256'] = sha256.hexdigest()
             f.flush();os.fchmod(f.fileno(),0o644)
             os.link(temporary,target)  # Never replace an existing file.
         finally:
@@ -73,7 +79,10 @@ def download(specs, directory, snapshot, only_source=False):
     command = ['sh','/work/apt_retry.sh','source',*(['--only-source'] if only_source else []),
                '--download-only',*specs]
     try:
-        subprocess.run(command,cwd=directory,check=True,capture_output=True,text=True)
+        result = subprocess.run(command,cwd=directory,check=True,capture_output=True,text=True)
+        for log in (getattr(result,'stdout',''),getattr(result,'stderr','')):
+            if isinstance(log,str):
+                print(log,end='')
         return []
     except subprocess.CalledProcessError as error:
         log = (error.stdout or '')+(error.stderr or '')
@@ -85,7 +94,9 @@ def download(specs, directory, snapshot, only_source=False):
     # apt reads the already authenticated, fixed-snapshot Sources indexes.
     text = subprocess.check_output(['apt-get','--print-uris','source','--only-source','--download-only',*specs],
                                    cwd=directory,text=True)
-    used = [r for r in archive_inputs(text,snapshot) if download_exact(r,directory)]
+    records = archive_inputs(text,snapshot)
+    print(text,end='')  # Retain the real, validated apt URI/hash records.
+    used = [r for r in records if download_exact(r,directory)]
     # Let apt revalidate the complete original source set; no package/version,
     # index, checksum or source-offering rule has changed.
     subprocess.run(command,cwd=directory,check=True)
