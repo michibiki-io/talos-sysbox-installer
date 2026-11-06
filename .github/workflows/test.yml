@@ -70,6 +70,9 @@ jobs:
         run: git restore -- versions.lock.json
       - name: Build both installers and probe (no publication)
         run: python3 scripts/build.py --builder '${{ steps.builder.outputs.name }}' --arch '${{ matrix.arch }}' --output .build --with-probe
+      - name: Generate and inspect Standard Oracle ARM64 disks (no boot)
+        if: matrix.arch == 'arm64'
+        run: python3 scripts/oracle_disk.py --build-output .build --builder '${{ steps.builder.outputs.name }}'
       - name: Validate complete release assets offline
         run: |
           python3 - <<'PY'
@@ -81,13 +84,23 @@ jobs:
           if 'probe' not in inputs:
               raise RuntimeError('Missing integrated probe record')
           assets = validate_assets(inputs, directory)
-          proof = {'archiveImageCount': len(assets) - 2,
+          proof = {'archiveImageCount': len(inputs['image_archives']),
                    'sourceBytes': (directory / 'sources.tar.gz').stat().st_size,
                    'assetBytes': {p.name: p.stat().st_size for p in assets}}
           if proof['archiveImageCount'] != 4 or proof['sourceBytes'] == 0:
               raise RuntimeError('Expected four original archives and complete sources')
           (directory / 'release-asset-sizes.json').write_text(json.dumps(proof, indent=2) + '\n')
           PY
+      - name: Upload complete Oracle disks and input evidence
+        if: matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: standard-oracle-arm64
+          include-hidden-files: true
+          retention-days: 14
+          compression-level: 0
+          path: .build/oracle/*
+          if-no-files-found: error
       - name: Supporting Talos-in-Docker runtime checks
         if: github.event_name == 'workflow_dispatch' && inputs.run_runtime == true
         run: |
@@ -109,5 +122,10 @@ jobs:
             .build/evidence/build-metadata.json
             .build/standard/inputs.json
             .build/vmware/inputs.json
+            .build/oracle.partial-*/generator.log
+            .build/oracle.partial-*/conversion.log
+            .build/oracle.partial-*/loop.json
+            .build/oracle.partial-*/FAILED.txt
+            .build/oracle.partial-*/original-imager-output.json
             test/e2e/results/*.json
           if-no-files-found: warn

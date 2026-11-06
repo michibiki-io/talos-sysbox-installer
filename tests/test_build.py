@@ -196,8 +196,11 @@ class ProbePackageTests(unittest.TestCase):
             member = tarfile.TarInfo('bubblewrap/COPYING'); member.size = 7
             tf.addfile(member, io.BytesIO(b'license'))
         data = archive.getvalue()
-        for failure in (False, True):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as work:
+        import ubuntu_sources
+        original_download = ubuntu_sources.download
+        for mode in ('normal','failure','fallback'):
+            failure = mode == 'failure'
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as work:
                 root = Path(work)
                 def image_path(value):
                     return root / str(value).lstrip('/')
@@ -215,10 +218,21 @@ class ProbePackageTests(unittest.TestCase):
                     if args[0] != 'sh': return
                     self.assertEqual(args[:5], ['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only'])
                     self.assertEqual(args[5:], expected)
-                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True})
+                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True,
+                                              'capture_output': True, 'text': True})
                     (kwargs['cwd']/'audit.dsc').write_bytes(b'partial source')
                     if failure: raise subprocess.CalledProcessError(100, args)
                     (kwargs['cwd']/'example.dsc').write_bytes(b'remaining source')
+                    return subprocess.CompletedProcess(args,0,'','')
+                fallback_records = [{'file':'audit.dsc','url':'https://archive.ubuntu.com/ubuntu/pool/main/a/audit/audit.dsc',
+                                     'bytes':len(b'partial source'),'sha256':hashlib.sha256(b'partial source').hexdigest()}]
+                def source_download(specs,destination,snapshot,only_source=False):
+                    if mode != 'fallback':
+                        return original_download(specs,destination,snapshot,only_source=only_source)
+                    self.assertEqual(specs,expected);self.assertEqual(snapshot,lock['apt_snapshot']);self.assertTrue(only_source)
+                    (destination/'audit.dsc').write_bytes(b'partial source')
+                    (destination/'example.dsc').write_bytes(b'remaining source')
+                    return fallback_records
                 with mock.patch('pathlib.Path', side_effect=image_path), \
                      mock.patch.object(sys, 'version_info', (3, 12)), \
                      mock.patch.dict(sys.modules, {'validation_packages': probe_packages}), \
@@ -228,13 +242,15 @@ class ProbePackageTests(unittest.TestCase):
                      mock.patch.object(shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
                      mock.patch.object(subprocess, 'check_output', side_effect=lambda args, **kw:
                          {'bwrap': 'bubblewrap 0.12.0', 'python3': 'Python 3.12', 'cc': 'cc fixture'}[args[0]]), \
-                     mock.patch.object(subprocess, 'run', side_effect=command) as run:
+                     mock.patch.object(subprocess, 'run', side_effect=command) as run, \
+                     mock.patch.object(ubuntu_sources,'download',side_effect=source_download) as download:
                     if failure:
                         with self.assertRaises(subprocess.CalledProcessError) as raised: exec(script, {})
                         self.assertEqual(raised.exception.returncode, 100)
                     else:
                         exec(script, {})
-                    self.assertEqual(sum(call.args[0][0] == 'sh' for call in run.call_args_list), 1)
+                    self.assertEqual(sum(call.args[0][0] == 'sh' for call in run.call_args_list), 0 if mode == 'fallback' else 1)
+                    download.assert_called_once()
                 sources = root/'opt/validation-sources'
                 self.assertEqual(json.loads((sources/'binary-packages.json').read_text()), inventory)
                 self.assertEqual(json.loads((sources/'packages.json').read_text()),
@@ -245,6 +261,9 @@ class ProbePackageTests(unittest.TestCase):
                 self.assertEqual((root/'opt/proc-transfer/image-versions.json').exists(), not failure)
                 if not failure:
                     hashes = json.loads(manifest.read_text())
+                    if mode == 'fallback':
+                        self.assertEqual(json.loads((sources/'ubuntu-source-fallbacks.json').read_text()),fallback_records)
+                        self.assertIn('ubuntu-source-fallbacks.json',hashes)
                     self.assertEqual(hashes, {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                              for p in sources.iterdir() if p != manifest})
 

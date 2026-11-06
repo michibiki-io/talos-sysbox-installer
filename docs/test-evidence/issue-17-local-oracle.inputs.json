@@ -1,0 +1,513 @@
+{
+  "schema_version": 1,
+  "project_version": "0.6.0-preview",
+  "source_commit": "ee3c22a1fb205c6fd941f8723947ebf4eefac383",
+  "talos": "1.12.6",
+  "sysbox": "0.7.1",
+  "architecture": "arm64",
+  "platform": "oracle",
+  "variant": "standard",
+  "executor_architecture": "amd64",
+  "imager": "ghcr.io/siderolabs/imager:v1.12.6@sha256:15cf821fa546911ed86286a96ed588ce8662cce31321d1b82eea6029d5be8c64",
+  "standard": {
+    "variant": "standard",
+    "architecture": "arm64",
+    "talos": "1.12.6",
+    "sysbox": "0.7.1",
+    "imager": "ghcr.io/siderolabs/imager:v1.12.6@sha256:31207eb6747ea3c61c1bba21e0287a7015a2b0f93a0cb9a255780e54e26c7016",
+    "base_installer": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:af4d2c80b3f3ec51ff4be1d898132ed8e1d54611618b30b0135fbb2d26abd49a",
+    "catalogue": "ghcr.io/siderolabs/extensions:v1.12.6@sha256:5ab82299837b21d46ae480c27093b754b32c39fb6d1ff704753b017ee2dcc04b",
+    "extensions": [
+      "ghcr.io/michibiki-io/talos-sysbox-extension@sha256:cb9345d29ffa0b930d441b81336ce6e74dbf249b919b2006b9640c58253e6b83",
+      "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
+      "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb"
+    ],
+    "image": "ghcr.io/michibiki-io/talos-sysbox-installer-standard:v0.5.0-talos-v1.12.6-arm64"
+  },
+  "base_installer": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:af4d2c80b3f3ec51ff4be1d898132ed8e1d54611618b30b0135fbb2d26abd49a",
+  "extensions": [
+    "ghcr.io/michibiki-io/talos-sysbox-extension@sha256:cb9345d29ffa0b930d441b81336ce6e74dbf249b919b2006b9640c58253e6b83",
+    "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
+    "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb"
+  ],
+  "extension_exports": [
+    {
+      "ref": "ghcr.io/michibiki-io/talos-sysbox-extension@sha256:cb9345d29ffa0b930d441b81336ce6e74dbf249b919b2006b9640c58253e6b83",
+      "config_digest": "sha256:bbc431a1e0634f722f6852f6f6e671113f5671bfcc7a37c35a8cc2e8b27c319e",
+      "architecture": "arm64",
+      "export_sha256": "1daf28d412232452faced91fafd72de2c17d86b415d7c44629d697fe80f6f875"
+    },
+    {
+      "ref": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
+      "config_digest": "sha256:b2fd4742cfd455c071b3deb4ba930bde293a54123165757119474787d1ba157c",
+      "architecture": "arm64",
+      "export_sha256": "e9734d8371a45f74731e9623d09a62f420ef6f42ee714997d76fb59ef2be1e8c"
+    },
+    {
+      "ref": "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb",
+      "config_digest": "sha256:ae9a4d8f11646e1ffd00b52a78cc0a3250120fdf0c4284c98f706c4fc41f134b",
+      "architecture": "arm64",
+      "export_sha256": "fc0f0c8d4eed30d872cd054d2a3a997b9112b15ebe0cb4a8da0bb38cca5437ff"
+    }
+  ],
+  "standard_installer_export": {
+    "ref": "ghcr.io/michibiki-io/talos-sysbox-installer-standard@sha256:59bffe3e4e926dc47e7fe55ff9d4344e4300c16f252004834c6854aeae03016b",
+    "config_digest": "sha256:50a30a2fbe3ce7b18d0122f6418b938fbabf4d973c783511764fdabb55e5884f",
+    "architecture": "arm64",
+    "export_sha256": "0e36aea70ab2fb5f1ffb08dd852e2805ee2c19a6c427f860a81be902d2315ede"
+  },
+  "source_dirty": true,
+  "executor_inputs": {
+    "talos": "1.12.6",
+    "sysbox": "0.7.1",
+    "architecture": "amd64",
+    "ubuntu": "docker.io/library/ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+    "go": "docker.io/library/golang:1.26.2@sha256:7095ad02810845fa35d1fb090b8e57dd20dce4ca36b29b42951802350d2ec90e",
+    "apt_snapshot": "20261001T000000Z",
+    "sysbox_package": {
+      "url": "https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb",
+      "sha256": "9d6d5484f980d0a17f86c492c1262015c2afb66280bdb97215b79fde6a0261c5"
+    },
+    "sources": {
+      "sysbox": {
+        "url": "https://github.com/nestybox/sysbox/archive/refs/tags/v0.7.1.tar.gz",
+        "sha256": "1d866dcf6bb5fecd16e29cb31384943d0849518edb46a077d913cdfa90fb5a82",
+        "commit": "82881aaaf2ce22ad0ff81487f458162908cb933f"
+      },
+      "containerd": {
+        "url": "https://github.com/containerd/containerd/archive/refs/tags/v2.1.6.tar.gz",
+        "sha256": "9b13537e5d61b9cf301295a807751447cc7c86fd79bb37ac5630455013d353a5"
+      }
+    },
+    "catalogue": "ghcr.io/siderolabs/extensions:v1.12.6@sha256:293505847848bb3cb13548a8692cdb414002e16209f5166786cc2fcdb3e765a0",
+    "imager": "ghcr.io/siderolabs/imager:v1.12.6@sha256:15cf821fa546911ed86286a96ed588ce8662cce31321d1b82eea6029d5be8c64",
+    "base_installer": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:9c8b9888993b30c3547879fdcee138fa9a25503b41ec2fdc5ae3671946f1b5a3",
+    "extensions": {
+      "iscsi-tools": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294",
+      "util-linux-tools": "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb",
+      "vmtoolsd-guest-agent": "ghcr.io/siderolabs/vmtoolsd-guest-agent:v1.5.0@sha256:fa82f581be4f277252b222b84e112dad4eea97eccf974808179d6c501c14fd46"
+    },
+    "standard_extensions": [
+      "iscsi-tools",
+      "util-linux-tools"
+    ],
+    "test_images": {
+      "docker": "docker:27.5.1-dind@sha256:f649ef046008ca7f926a2571c32b0ac22e5c59eb61b959617f9acc2a4c638cf5",
+      "busybox": "busybox:1.36@sha256:b7f3d86d6e84fc17718c48bcde1450807faa2d56704205c697b4bd5df7b9e29f",
+      "kind_node": "kindest/node:v1.35.0@sha256:986401fce0e567a9860075ba9df8c8459bd99a35f79024d8a682773fb40f0753",
+      "talos_docker": "ghcr.io/siderolabs/talos:v1.12.6@sha256:dfd2566ef18636be986fd53cd174009dd48bfb58f81ebf7f98afd71b6da991b9"
+    },
+    "test_tools": {
+      "kubectl": {
+        "url": "https://dl.k8s.io/release/v1.35.2/bin/linux/amd64/kubectl",
+        "sha256": "924eb50779153f20cb668117d141440b95df2f325a64452d78dff9469145e277"
+      },
+      "kind": {
+        "url": "https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64",
+        "sha256": "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa"
+      },
+      "helm": {
+        "url": "https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz",
+        "sha256": "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496"
+      },
+      "talosctl": {
+        "url": "https://github.com/siderolabs/talos/releases/download/v1.13.5/talosctl-linux-amd64",
+        "sha256": "cb12209727c0c4d57d74c0595f34d441ba491421e1d3c8a5142ed91028a20232"
+      }
+    },
+    "sysbox_components": {
+      "sysbox-runc": {
+        "url": "https://github.com/nestybox/sysbox-runc/archive/081856cc5d17e7095f066b08d0eca6bb0b515c47.tar.gz",
+        "sha256": "1440ee7276dc20f2397f485a6ae987c0fd62270a209e335bd3c1e68db676b704",
+        "commit": "081856cc5d17e7095f066b08d0eca6bb0b515c47"
+      },
+      "sysbox-mgr": {
+        "url": "https://github.com/nestybox/sysbox-mgr/archive/2d45af01bcfd8641e6641f76104c6003bf501cd7.tar.gz",
+        "sha256": "8c39b638d0051b61eea0a17972787259ce0597b1ce4cfc1fca75d3ee4826ecf9",
+        "commit": "2d45af01bcfd8641e6641f76104c6003bf501cd7"
+      },
+      "sysbox-fs": {
+        "url": "https://github.com/nestybox/sysbox-fs/archive/c3d2ebc65102e32e74e383675f03b45556326888.tar.gz",
+        "sha256": "7395b8714cc2c035e4bc1f0e4187fc02ffe614881bef9de888de60444441f580",
+        "commit": "c3d2ebc65102e32e74e383675f03b45556326888"
+      },
+      "sysbox-ipc": {
+        "url": "https://github.com/nestybox/sysbox-ipc/archive/f05151f4b4c1df63d7fd241577ca032905c1bd0e.tar.gz",
+        "sha256": "acb5eaeb9eba9ab603bb4135230fd4956477c1bd30639799ffe9f871daacd177",
+        "commit": "f05151f4b4c1df63d7fd241577ca032905c1bd0e"
+      },
+      "sysbox-libs": {
+        "url": "https://github.com/nestybox/sysbox-libs/archive/cacac19395528afa42b467a980b05d8d1c6d646c.tar.gz",
+        "sha256": "5555e8989539d4bf04ad7ba276001ad85a4aad3a71f06c1fea75b3ff374924e3",
+        "commit": "cacac19395528afa42b467a980b05d8d1c6d646c"
+      },
+      "sysbox-fs/bazil": {
+        "url": "https://github.com/nestybox/fuse/archive/5ce319439091b08f33b149cb2482039f1b0a24fe.tar.gz",
+        "sha256": "91e00b9d6626dd8988683bc67048cfa6d2a62bfdf3295749eac9bd30409863b6",
+        "commit": "5ce319439091b08f33b149cb2482039f1b0a24fe"
+      }
+    },
+    "protobuf_generator": {
+      "version": "1.3.2",
+      "url": "https://proxy.golang.org/github.com/golang/protobuf/@v/v1.3.2.zip",
+      "sha256": "a004ba3acb85e012cb9e468e1d445a81cfeeb4b4db7e9802f30aa500a8341851"
+    },
+    "validation_sources": {
+      "bubblewrap": {
+        "version": "0.12.0",
+        "url": "https://codeload.github.com/containers/bubblewrap/tar.gz/refs/tags/v0.12.0",
+        "sha256": "3f66d9e3f85396f6d7d7fbd2859f277e4fd3a9303341bfe2ff325251bda65fd4"
+      }
+    }
+  },
+  "tool_images": {
+    "generator": "sha256:ae79febcb44090b8e95cd9a061d8ff730bc9017927153cdd5f002d987c3790f2",
+    "tools": "sha256:6543cf222484ba38561c039be91dea8685154ad8e4fb9056316b7f8aaad685c1"
+  },
+  "profile": {
+    "baseProfileName": "oracle",
+    "arch": "arm64",
+    "platform": "oracle",
+    "version": "1.12.6",
+    "input": {
+      "baseInstaller": {
+        "imageRef": "ghcr.io/siderolabs/installer-base:v1.12.6@sha256:af4d2c80b3f3ec51ff4be1d898132ed8e1d54611618b30b0135fbb2d26abd49a"
+      },
+      "systemExtensions": [
+        {
+          "imageRef": "ghcr.io/michibiki-io/talos-sysbox-extension@sha256:cb9345d29ffa0b930d441b81336ce6e74dbf249b919b2006b9640c58253e6b83"
+        },
+        {
+          "imageRef": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:b30127b2f3ea6a49aa73dcf18c30da1fa1d2604da00c60519f8f00b4c6d25294"
+        },
+        {
+          "imageRef": "ghcr.io/siderolabs/util-linux-tools:2.41.2@sha256:8433604b21ec56871b00f363008ab455b2ece264246be915a2d6f742ec90ffcb"
+        }
+      ]
+    },
+    "customization": {
+      "extraKernelArgs": [
+        "console=ttyAMA0,9600"
+      ]
+    },
+    "output": {
+      "kind": "image",
+      "outFormat": "raw",
+      "imageOptions": {
+        "diskSize": 2147483648,
+        "diskFormat": "raw",
+        "bootloader": "sd-boot"
+      }
+    }
+  },
+  "profile_sha256": "cffdd3ffed537ecf4f2ff3cc201b722a1558bbc63a4854cb164da9a53ecbec6b",
+  "generation_sha256": {
+    "scripts/oracle_disk.py": "68d7464542879cb005981a117e15cd69e57a5a326e580045ade15a91908752f7",
+    "build/apt_retry.sh": "90b48a9d57e953526c4f93248c35a3a9296fb21292a43b1dabbe0bc52348e136",
+    "build/oracle/Dockerfile": "54b735f125c257ed6bd7585bb257c1a23543eb7c88041541bc37b63b408354b7",
+    "build/oracle/inspect.py": "94e8ffc1b23483dfac3a0217cabbd9dbb520ecf2594deeeedd2f7d9cf869c051",
+    "build/oracle/loop.go": "3c4f02a1f9bbcd3a6cc2d6157d535932e88622395c7688ec6b9c4147517a9143"
+  },
+  "build_metadata_sha256": "e7dde1f51c92391eba84f401e6eef12a71f6ca34655e065ea16a704c1101eda1",
+  "isolation": {
+    "cpus": 2,
+    "memory_bytes": 4294967296,
+    "pids": 256,
+    "tmpfs_bytes": 2147483648,
+    "host_dev_bind": false,
+    "loop": {
+      "loop": 16,
+      "before": "verified unused",
+      "after": "unbound",
+      "partitions": [
+        "loop16p1",
+        "loop16p2"
+      ]
+    },
+    "container_removed": true,
+    "scratch_initial_request_bytes": 2147483648
+  },
+  "original_imager_output": {
+    "sha256": "ce5c7025154fda09093ce141bd8b378eac5b29e09c2dcab0a2d13d4e4fc94724",
+    "bytes": 3196059648,
+    "gpt": {
+      "primary_lba": 1,
+      "backup_lba": 6242303,
+      "crc": "PASS",
+      "partitions": [
+        {
+          "number": 1,
+          "label": "EFI",
+          "start_lba": 2048,
+          "end_lba": 4304895,
+          "sha256": "3e2e31562c9da3bb1e7a99fd4dc6159be799b41fe75dbe34654c1a6911e90a0d"
+        },
+        {
+          "number": 2,
+          "label": "META",
+          "start_lba": 4304896,
+          "end_lba": 4306943,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      ]
+    }
+  },
+  "normalized_source": {
+    "sha256": "82c686fd1d3e9b3638584a7fad85da52793c94e1bb88a8e68241231972d3a0de",
+    "bytes": 53687091200,
+    "gpt": {
+      "primary_lba": 1,
+      "backup_lba": 104857599,
+      "crc": "PASS",
+      "partitions": [
+        {
+          "number": 1,
+          "label": "EFI",
+          "start_lba": 2048,
+          "end_lba": 4304895,
+          "sha256": "3e2e31562c9da3bb1e7a99fd4dc6159be799b41fe75dbe34654c1a6911e90a0d"
+        },
+        {
+          "number": 2,
+          "label": "META",
+          "start_lba": 4304896,
+          "end_lba": 4306943,
+          "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+        }
+      ]
+    }
+  },
+  "boot_assets": {
+    "firmware": "UEFI ARM64",
+    "loader": "systemd-boot",
+    "loader_sha256": "00f8ac50b0f2414b239777f27c0bf897c9ea8aa86fa0e66e36ffa891c76afafb",
+    "console": [
+      "console=ttyAMA0,9600"
+    ],
+    "ukis": [
+      {
+        "file": "Talos-1.12.6.efi",
+        "sha256": "75f9520e45c8502747ab47a35e804a22ef859fc71290842c45269f7df9a6f152",
+        "cmdline": [
+          "talos.platform=oracle",
+          "console=ttyAMA0,9600",
+          "net.ifnames=0",
+          "talos.dashboard.disabled=1",
+          "init_on_alloc=1",
+          "slab_nomerge",
+          "pti=on",
+          "consoleblank=0",
+          "nvme_core.io_timeout=4294967295",
+          "printk.devkmsg=on",
+          "selinux=1",
+          "module.sig_enforce=1",
+          "talos.experimental.wipe=system:EPHEMERAL,STATE"
+        ],
+        "kernel_format": "ARM64 EFI zboot PE",
+        "kernel_sha256": "7ab8e3c3628e0dc3f0843f54bf587fa76e2c643702b0e12ed3e38645f925d714",
+        "initrd_sha256": "4ccdfada1fe673d2d94310b3cc23f25312b67b980d0715344db24c3eca1f12ba",
+        "initrd_compression": [
+          "zstd (magic, concatenated frames)"
+        ],
+        "extensions": [
+          {
+            "metadata": {
+              "name": "sysbox",
+              "version": "0.7.1",
+              "author": "michibiki.io",
+              "description": "Sysbox runtime and supervised node backends",
+              "compatibility": {
+                "talos": {
+                  "version": "= v1.12.6"
+                }
+              }
+            },
+            "squashfs_sha256": "731355dc74143261468804a29a81613a7ddc5cc57f7075d34f9ab233e4660faa",
+            "rootfs_entries": 4332,
+            "input_content_comparison": "PASS",
+            "standard_installer_payload_comparison": "PASS",
+            "mode_differences": [
+              {
+                "path": "usr/local/lib/containers/sysbox-fs/tmp",
+                "input_mode": "1777",
+                "embedded_mode": "0777",
+                "reason": "pinned Talos extension unpack normalization; runtime UNRUN"
+              },
+              {
+                "path": "usr/local/lib/containers/sysbox-mgr/tmp",
+                "input_mode": "1777",
+                "embedded_mode": "0777",
+                "reason": "pinned Talos extension unpack normalization; runtime UNRUN"
+              }
+            ]
+          },
+          {
+            "metadata": {
+              "name": "iscsi-tools",
+              "version": "v0.2.0",
+              "author": "Sidero Labs",
+              "description": "[core] This system extension provides iscsi-tools.\n",
+              "compatibility": {
+                "talos": {
+                  "version": ">= v1.1.0"
+                }
+              }
+            },
+            "squashfs_sha256": "2a6dfdc7e1bd4b2f6d6d8934b7a4a8f5997967aad3dea57722f98a0bbf933c49",
+            "rootfs_entries": 32,
+            "input_content_comparison": "PASS",
+            "standard_installer_payload_comparison": "PASS",
+            "mode_differences": []
+          },
+          {
+            "metadata": {
+              "name": "util-linux-tools",
+              "version": "2.41.2",
+              "author": "Sidero Labs",
+              "description": "[contrib] This system extension provides a minimal util-linux package.\n",
+              "compatibility": {
+                "talos": {
+                  "version": ">= v1.0.0"
+                }
+              }
+            },
+            "squashfs_sha256": "f2170a7990ed4269de80a25ff7b6a17b5e6d93fc4e51ade0acd0c8e55a109a67",
+            "rootfs_entries": 7,
+            "input_content_comparison": "PASS",
+            "standard_installer_payload_comparison": "PASS",
+            "mode_differences": []
+          }
+        ]
+      }
+    ],
+    "metadata": "oracle /opc/v2/ via talos.platform=oracle (pinned Talos source; network NOT_RUN)"
+  },
+  "qemu_info": {
+    "qcow2": {
+      "children": [
+        {
+          "name": "file",
+          "info": {
+            "children": [],
+            "virtual-size": 121372672,
+            "filename": "/out/arm64-standard-oracle.qcow2",
+            "format": "file",
+            "actual-size": 121372672,
+            "format-specific": {
+              "type": "file",
+              "data": {}
+            },
+            "dirty-flag": false
+          }
+        }
+      ],
+      "virtual-size": 53687091200,
+      "filename": "/out/arm64-standard-oracle.qcow2",
+      "cluster-size": 8192,
+      "format": "qcow2",
+      "actual-size": 121372672,
+      "format-specific": {
+        "type": "qcow2",
+        "data": {
+          "compat": "1.1",
+          "compression-type": "zlib",
+          "lazy-refcounts": false,
+          "refcount-bits": 16,
+          "corrupt": false,
+          "extended-l2": false
+        }
+      },
+      "dirty-flag": false
+    },
+    "vmdk": {
+      "children": [
+        {
+          "name": "file",
+          "info": {
+            "children": [],
+            "virtual-size": 128104448,
+            "filename": "/out/arm64-standard-oracle.vmdk",
+            "format": "file",
+            "actual-size": 121544704,
+            "format-specific": {
+              "type": "file",
+              "data": {}
+            },
+            "dirty-flag": false
+          }
+        }
+      ],
+      "virtual-size": 53687091200,
+      "filename": "/out/arm64-standard-oracle.vmdk",
+      "cluster-size": 65536,
+      "format": "vmdk",
+      "actual-size": 121544704,
+      "format-specific": {
+        "type": "vmdk",
+        "data": {
+          "cid": 483220046,
+          "parent-cid": 4294967295,
+          "create-type": "streamOptimized",
+          "extents": [
+            {
+              "compressed": true,
+              "virtual-size": 53687091200,
+              "filename": "/out/arm64-standard-oracle.vmdk",
+              "cluster-size": 65536,
+              "format": ""
+            }
+          ]
+        }
+      },
+      "dirty-flag": false
+    }
+  },
+  "vmdk": {
+    "create_type": "streamOptimized",
+    "standalone": true,
+    "embedded_descriptor": "# Disk DescriptorFile\nversion=1\nCID=1ccd5a4e\nparentCID=ffffffff\ncreateType=\"streamOptimized\"\n\n# Extent description\nRW 104857600 SPARSE \"arm64-standard-oracle.vmdk\"\n\n# The Disk Data Base\n#DDB\n\nddb.virtualHWVersion = \"6\"\nddb.geometry.cylinders = \"104025\"\nddb.geometry.heads = \"16\"\nddb.geometry.sectors = \"63\"\nddb.adapterType = \"ide\"\nddb.toolsVersion = \"2147483647\"\n"
+  },
+  "artifacts": {
+    "arm64-standard-oracle.qcow2": {
+      "sha256": "f0a134d11486f50e1be52f137ba21f3186e0802e88028a81a89da1861f507b5a",
+      "bytes": 121372672,
+      "virtual_bytes": 53687091200,
+      "format": "qcow2"
+    },
+    "arm64-standard-oracle.vmdk": {
+      "sha256": "e547b42c3737e407ec554c14c1b1092fd2fd8fdec9944d9cae599b5518d802d6",
+      "bytes": 128104448,
+      "virtual_bytes": 53687091200,
+      "format": "vmdk/streamOptimized"
+    },
+    "arm64-standard-oracle.qcow2.zst": {
+      "sha256": "67278c13bcb684990eedd311f533139ee129f95ab0e8f95715368d8d1f71c723",
+      "bytes": 120571711,
+      "virtual_bytes": 53687091200,
+      "format": "qcow2+zstd"
+    }
+  },
+  "tools": {
+    "qemu-img": "qemu-img version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
+    "zstd": "*** Zstandard CLI (64-bit) v1.5.5, by Yann Collet ***",
+    "sgdisk": "GPT fdisk (sgdisk) version 1.0.10",
+    "mcopy": "mcopy (GNU mtools) 4.0.43",
+    "unsquashfs": "unsquashfs version 4.6.1 (2023/03/25)"
+  },
+  "packages": "apt\t2.8.3\nbase-files\t13ubuntu10.5\nbase-passwd\t3.6.3build1\nbash\t5.2.21-2ubuntu4\nbsdutils\t1:2.39.3-9ubuntu6.6\ncoreutils\t9.4-3ubuntu6.3\ndash\t0.5.12-6ubuntu5\ndebconf\t1.5.86ubuntu1\ndebianutils\t5.17build1\ndiffutils\t1:3.10-1ubuntu0.1\ndpkg\t1.22.6ubuntu6.6\ne2fsprogs\t1.47.0-2.4~exp1ubuntu4.1\nfindutils\t4.9.0-5build1\ngcc-14-base:amd64\t14.2.0-4ubuntu2~24.04.1\ngdisk\t1.0.10-1build1\ngpgv\t2.4.4-2ubuntu17.6\ngrep\t3.11-4build1\ngzip\t1.12-1ubuntu3.2\nhostname\t3.23+nmu2ubuntu2\ninit-system-helpers\t1.66ubuntu1\nlibacl1:amd64\t2.3.2-1build1.1\nlibaio1t64:amd64\t0.3.113-6build1.1\nlibapt-pkg6.0t64:amd64\t2.8.3\nlibassuan0:amd64\t2.5.6-1build1\nlibattr1:amd64\t1:2.5.2-1ubuntu0.1\nlibaudit-common\t1:3.1.2-2.1build1.1\nlibaudit1:amd64\t1:3.1.2-2.1build1.1\nlibblkid1:amd64\t2.39.3-9ubuntu6.6\nlibbz2-1.0:amd64\t1.0.8-5.1ubuntu0.1\nlibc-bin\t2.39-0ubuntu8.9\nlibc6:amd64\t2.39-0ubuntu8.9\nlibcap-ng0:amd64\t0.8.4-2build2\nlibcap2:amd64\t1:2.66-5ubuntu2.4\nlibcom-err2:amd64\t1.47.0-2.4~exp1ubuntu4.1\nlibcrypt1:amd64\t1:4.4.36-4build1\nlibdb5.3t64:amd64\t5.3.28+dfsg2-7\nlibdebconfclient0:amd64\t0.271ubuntu3\nlibexpat1:amd64\t2.6.1-2ubuntu0.6\nlibext2fs2t64:amd64\t1.47.0-2.4~exp1ubuntu4.1\nlibffi8:amd64\t3.4.6-1build1\nlibfuse3-3:amd64\t3.14.0-5build1\nlibgcc-s1:amd64\t14.2.0-4ubuntu2~24.04.1\nlibgcrypt20:amd64\t1.10.3-2ubuntu0.2\nlibglib2.0-0t64:amd64\t2.80.0-6ubuntu3.9\nlibgmp10:amd64\t2:6.3.0+dfsg-2ubuntu6.1\nlibgnutls30t64:amd64\t3.8.3-1.1ubuntu3.6\nlibgpg-error0:amd64\t1.47-3build2.1\nlibhogweed6t64:amd64\t3.9.1-2.2build1.1\nlibidn2-0:amd64\t2.3.7-2build1.1\nliblz4-1:amd64\t1.9.4-1build1.1\nliblzma5:amd64\t5.6.1+really5.4.5-1ubuntu0.3\nliblzo2-2:amd64\t2.10-2build4\nlibmd0:amd64\t1.1.0-2build1.1\nlibmount1:amd64\t2.39.3-9ubuntu6.6\nlibncursesw6:amd64\t6.4+20240113-1ubuntu2.2\nlibnettle8t64:amd64\t3.9.1-2.2build1.1\nlibnpth0t64:amd64\t1.6-3.1build1\nlibnuma1:amd64\t2.0.18-1ubuntu0.24.04.1\nlibp11-kit0:amd64\t0.25.3-4ubuntu2.2\nlibpam-modules:amd64\t1.5.3-5ubuntu5.7\nlibpam-modules-bin\t1.5.3-5ubuntu5.7\nlibpam-runtime\t1.5.3-5ubuntu5.7\nlibpam0g:amd64\t1.5.3-5ubuntu5.7\nlibpcre2-8-0:amd64\t10.42-4ubuntu2.1\nlibpopt0:amd64\t1.19+dfsg-1build1\nlibproc2-0:amd64\t2:4.0.4-4ubuntu3.3\nlibpython3-stdlib:amd64\t3.12.3-0ubuntu2.1\nlibpython3.12-minimal:amd64\t3.12.3-1ubuntu0.17\nlibpython3.12-stdlib:amd64\t3.12.3-1ubuntu0.17\nlibreadline8t64:amd64\t8.2-4build1\nlibseccomp2:amd64\t2.5.5-1ubuntu3.1\nlibselinux1:amd64\t3.5-2ubuntu2.1\nlibsemanage-common\t3.5-1build5\nlibsemanage2:amd64\t3.5-1build5\nlibsepol2:amd64\t3.5-2build1\nlibsmartcols1:amd64\t2.39.3-9ubuntu6.6\nlibsqlite3-0:amd64\t3.45.1-1ubuntu2.8\nlibss2:amd64\t1.47.0-2.4~exp1ubuntu4.1\nlibssl3t64:amd64\t3.0.13-0ubuntu3.15\nlibstdc++6:amd64\t14.2.0-4ubuntu2~24.04.1\nlibsystemd0:amd64\t255.4-1ubuntu8.17\nlibtasn1-6:amd64\t4.19.0-3ubuntu0.24.04.2\nlibtinfo6:amd64\t6.4+20240113-1ubuntu2.2\nlibudev1:amd64\t255.4-1ubuntu8.17\nlibunistring5:amd64\t1.1-2build1.1\nliburing2:amd64\t2.5-1build1\nlibuuid1:amd64\t2.39.3-9ubuntu6.6\nlibxxhash0:amd64\t0.8.2-2build1\nlibyaml-0-2:amd64\t0.2.5-1build1\nlibzstd1:amd64\t1.5.5+dfsg2-2build1.1\nlogin\t1:4.13+dfsg1-4ubuntu3.2\nlogsave\t1.47.0-2.4~exp1ubuntu4.1\nmawk\t1.3.4.20240123-1build1\nmedia-types\t10.1.0\nmount\t2.39.3-9ubuntu6.6\nmtools\t4.0.43-1build1\nncurses-base\t6.4+20240113-1ubuntu2.2\nncurses-bin\t6.4+20240113-1ubuntu2.2\nnetbase\t6.4\npasswd\t1:4.13+dfsg1-4ubuntu3.2\nperl-base\t5.38.2-3.2ubuntu0.6\nprocps\t2:4.0.4-4ubuntu3.3\npython3\t3.12.3-0ubuntu2.1\npython3-minimal\t3.12.3-0ubuntu2.1\npython3-yaml\t6.0.1-2build2\npython3.12\t3.12.3-1ubuntu0.17\npython3.12-minimal\t3.12.3-1ubuntu0.17\nqemu-utils\t1:8.2.2+ds-0ubuntu1.18\nreadline-common\t8.2-4build1\nsed\t4.9-2ubuntu0.24.04.1\nsensible-utils\t0.0.22\nsquashfs-tools\t1:4.6.1-1build1\nsysvinit-utils\t3.08-6ubuntu3\ntar\t1.35+dfsg-3ubuntu0.4\ntzdata\t2026c-0ubuntu0.24.04.1\nubuntu-keyring\t2023.11.28.1\nunminimize\t0.2.1\nutil-linux\t2.39.3-9ubuntu6.6\nzlib1g:amd64\t1:1.3.dfsg-3.1ubuntu2.2\nzstd\t1.5.5+dfsg2-2build1.1\n",
+  "validation": {
+    "generation": "PASS",
+    "qcow2_check": "PASS",
+    "exact_capacity": "PASS",
+    "backing_free": "PASS",
+    "guest_content_compare": "PASS",
+    "partition_preservation": "PASS",
+    "compressed_roundtrip": "PASS",
+    "static_boot_assets": "PASS",
+    "OCI": "NOT_RUN",
+    "boot": "NOT_RUN",
+    "sysbox_arm64": "UNRUN",
+    "docker_in_sysbox": "UNRUN",
+    "kind": "UNRUN"
+  }
+}

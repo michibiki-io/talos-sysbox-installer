@@ -9,10 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from stage_release import ARCHIVES, find_release, validate_archives, targets, asset_names
+from disk_artifacts import disk_record, disk_paths
 
 
 def restore_images(inputs,directory):
     paths=validate_archives(inputs,directory)
+    for arch, record in (targets(inputs) or {'':inputs}).items():
+        disk_paths(record,directory/arch)
     # Validate all archives before the first Docker mutation.
     for path in paths:subprocess.run(['docker','load','-i',str(path)],check=True)
 
@@ -36,6 +39,16 @@ def main():
         inputs=json.loads(Path('.build/images.json').read_text())
         if not set(asset_names(inputs)) <= names:
             raise RuntimeError('Original release is missing matching source/provenance assets')
+        # Even a completed release must retain its exact original disk bytes.
+        # This has no effect on pre-Oracle releases and never rebuilds an asset.
+        for arch, record in (targets(inputs) or {'': inputs}).items():
+            disks = disk_record(record)
+            if disks is not None:
+                destination = Path('.build')/arch/'oracle'
+                destination.mkdir(parents=True,exist_ok=True)
+                for filename in disks['files']:
+                    subprocess.run(['gh','release','download',a.tag,'--pattern',filename,'--dir',str(destination)],check=True)
+                disk_paths(record,Path('.build')/arch)
         if not published:
             records = targets(inputs)
             for arch, record in (records or {'': inputs}).items():

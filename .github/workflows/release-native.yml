@@ -112,6 +112,23 @@ jobs:
         env:
           PROJECT_VERSION: ${{ needs.metadata.outputs.docker_tag }}
         run: python3 scripts/build.py --version "$PROJECT_VERSION" --arch '${{ matrix.arch }}' --output .build --builder '${{ steps.builder.outputs.name }}' --registry-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" --with-probe
+      - name: Generate and inspect Standard Oracle ARM64 release disks
+        if: matrix.arch == 'arm64'
+        run: python3 scripts/oracle_disk.py --build-output .build --builder '${{ steps.builder.outputs.name }}'
+      - name: Retain Oracle generation diagnostics
+        if: always() && matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: oracle-release-diagnostics
+          include-hidden-files: true
+          retention-days: 2
+          if-no-files-found: warn
+          path: |
+            .build/oracle.partial-*/generator.log
+            .build/oracle.partial-*/conversion.log
+            .build/oracle.partial-*/loop.json
+            .build/oracle.partial-*/FAILED.txt
+            .build/oracle.partial-*/original-imager-output.json
       - uses: actions/upload-artifact@v7
         with:
           name: native-release-${{ matrix.arch }}
@@ -127,6 +144,7 @@ jobs:
             .build/vmware-image.tar
             .build/probe-image.tar
             .build/evidence/build-metadata.json
+            .build/oracle/*
 
   publish:
     needs: [metadata, build]
@@ -164,7 +182,7 @@ jobs:
       - name: Combine and load exact original native archives
         if: steps.original.outputs.reuse != 'true'
         run: |
-          python3 scripts/release/combine_inputs.py
+          python3 scripts/release/combine_inputs.py --require-oracle
           python3 - <<'PYCODE'
           import json, sys
           from pathlib import Path

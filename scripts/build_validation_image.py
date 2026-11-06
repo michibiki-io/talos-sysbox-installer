@@ -97,7 +97,7 @@ def main():
         for name in ('build', 'supervisor'):
             shutil.copytree(ROOT / name, context / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         (context / 'scripts').mkdir()
-        for name in ('build.py', 'publish.py', 'build_validation_image.py', 'update_proc_transfer.py', 'proc_transfer_operator.py'):
+        for name in build.PROJECT_SCRIPTS:
             shutil.copy2(ROOT / 'scripts' / name, context / 'scripts' / name)
         shutil.copy2(a.lock, context / 'versions.lock.json')
         shutil.copy2(ROOT / 'LICENSE', context / 'LICENSE')

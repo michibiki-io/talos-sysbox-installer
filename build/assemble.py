@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 from official_sources import collect, verify_catalogue, is_notice, stable_json
 import proc_transfer
+import ubuntu_sources
 
 LOCK = json.loads(Path('/work/versions.lock.json').read_text())
 OUT = Path('/out')
@@ -357,6 +358,7 @@ logToConsole: false
 '''
         LOCAL.joinpath('etc/containers', daemon + '.yaml').write_text(config)
     metadata = []
+    source_fallbacks = []
     for package in sorted(packages):
         fields = run(['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${source:Package}\t${source:Version}', package]).split('\t')
         binary, version, source, source_version = fields
@@ -371,13 +373,14 @@ logToConsole: false
                 common = LIC / 'common-licenses'
                 common.mkdir(exist_ok=True)
                 shutil.copy2(license_file, common / license_file.name)
-        subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--download-only', source + '=' + source_version], cwd=SOURCES, check=True)
+        source_fallbacks.extend(ubuntu_sources.download([source+'='+source_version],SOURCES,LOCK['apt_snapshot']))
         metadata.append({'binary': binary, 'version': version, 'source': source, 'source_version': source_version, 'provision': 'Corresponding source archive attached to the same release, including Debian/Ubuntu packaging and patches.'})
     hashes = {str(p.relative_to(SOURCES)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES.rglob('*') if p.is_file()}
     source_inputs={str(p.relative_to(Path('/work/project'))):hashlib.sha256(p.read_bytes()).hexdigest() for p in Path('/work/project').rglob('*') if p.is_file()}
     integration_record['output_sha256'] = {name: binaries[name] for name in proc_transfer.PRODUCTION_BINARIES}
     proc_transfer.verify_pair(LOCAL, binaries, LOCK['architecture'])
     report = {'proc_transfer': integration_record, 'inputs': LOCK, 'build_mode':'module-lock-generation' if os.environ.get('GENERATE_MODULE_LOCKS')=='1' else 'release', 'source_inputs_sha256':source_inputs, 'sysbox_build': 'Standalone runc/mgr unpatched; fs patched with proc/sysfs/FUSE and matched static helpers. All runtime binaries and both helpers rebuilt from checksum-locked release submodule sources with read-only Go module resolution and checksum verification; linked static archives identified by GNU linker maps.', 'binary_sha256': binaries, 'supervisor_sha256': hashlib.sha256(Path('/work/supervisor').read_bytes()).hexdigest(), 'ctr_build_info':ctr_build_info, 'official_source_inventory':official_inventory, 'packages': metadata, 'source_files_sha256': hashes, 'source_provision': 'Redistribute sources.tar.gz beside all images; licenses and NOTICE are in /usr/local/share/licenses/talos-sysbox. Matching library and application sources plus this repository build scripts permit rebuilding/relinking static LGPL components.'}
+    report['ubuntu_source_fallbacks'] = source_fallbacks
     OUT.joinpath('build-metadata.json').write_text(stable_json(report))
     shutil.copy2(OUT / 'build-metadata.json', LIC / 'build-metadata.json')
     OUT.joinpath('manifest.yaml').write_text(f'''version: v1alpha1

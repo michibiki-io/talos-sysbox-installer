@@ -10,6 +10,7 @@ import tarfile
 import urllib.request
 
 from validation_packages import normalize
+import ubuntu_sources
 
 if sys.version_info < (3, 12):
     raise ValueError('probe and trusted launcher require Python >=3.12')
@@ -47,8 +48,10 @@ shutil.copy2(source / 'COPYING', licenses / 'BUBBLEWRAP-COPYING')
 package_inputs = sorted({(p['source'], p['source_version']) for p in package_inventory['effective']})
 (sources / 'packages.json').write_text(json.dumps(package_inputs, indent=2) + '\n')
 # Batch exact versions to avoid reloading snapshot indexes for each package.
-subprocess.run(['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only',
-                *(package + '=' + version for package, version in package_inputs)], cwd=sources, check=True)
+fallbacks = ubuntu_sources.download([package+'='+version for package,version in package_inputs],
+                                   sources,lock['apt_snapshot'],only_source=True)
+if fallbacks:
+    (sources/'ubuntu-source-fallbacks.json').write_text(json.dumps(fallbacks,indent=2)+'\n')
 Path('/opt/proc-transfer/image-versions.json').write_text(json.dumps({
     'bubblewrap': '0.12.0', 'python': subprocess.check_output(['python3', '--version'], text=True).strip(),
     'cc': subprocess.check_output(['cc', '--version'], text=True).splitlines()[0],
