@@ -1,0 +1,92 @@
+"""Retain exact signed-snapshot sources through an Ubuntu snapshot HTTP 503."""
+import hashlib
+import os
+from pathlib import Path
+import re
+import shlex
+import ssl
+import subprocess
+import tempfile
+import urllib.parse
+import urllib.request
+
+
+def archive_inputs(text, snapshot):
+    """Only apt's SHA256/size records from the selected snapshot are eligible."""
+    prefix = '/ubuntu/'+snapshot+'/pool/'
+    records = {}
+    for line in text.splitlines():
+        if not line.startswith("'"):
+            continue
+        fields = shlex.split(line)
+        if len(fields) != 4:
+            raise ValueError('invalid apt source URI record')
+        uri,name,size,checksum = fields
+        url = urllib.parse.urlsplit(uri)
+        if (url.scheme not in ('http','https') or url.netloc != 'snapshot.ubuntu.com' or
+            not url.path.startswith(prefix) or url.query or url.fragment or
+            Path(name).name != name or name in ('.','..') or
+            urllib.parse.unquote(url.path.rsplit('/',1)[-1]) != name or
+            any(p in ('.','..') for p in urllib.parse.unquote(url.path).split('/')) or
+            not re.fullmatch(r'SHA256:[0-9a-f]{64}',checksum) or not size.isdigit() or int(size) <= 0):
+            raise ValueError('source URI is not bound to signed snapshot SHA256/size')
+        record = {'snapshot_uri':uri,'url':'https://archive.ubuntu.com/ubuntu/pool/'+url.path[len(prefix):],
+                  'file':name,'bytes':int(size),'sha256':checksum[7:]}
+        if name in records and records[name] != record:
+            raise ValueError('conflicting apt source record')
+        records[name] = record
+    if not records:
+        raise ValueError('no signed snapshot source URI records')
+    return list(records.values())
+
+
+def download_exact(record, directory):
+    target = directory/record['file']
+    if target.exists():
+        if target.is_symlink() or target.stat().st_size != record['bytes'] or hashlib.sha256(target.read_bytes()).hexdigest() != record['sha256']:
+            raise ValueError('existing source file differs from signed snapshot')
+        return False
+    with tempfile.NamedTemporaryFile(dir=directory, prefix='.ubuntu-source-', delete=False) as f:
+        temporary = Path(f.name)
+        try:
+            h = hashlib.sha256(); total = 0
+            context = ssl.create_default_context(cafile='/etc/ssl/certs/ca-certificates.crt')
+            with urllib.request.urlopen(record['url'],timeout=120,context=context) as response:
+                while True:
+                    chunk = response.read(min(1024*1024,record['bytes']-total+1))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > record['bytes']:
+                        raise ValueError('Ubuntu source exceeds signed size')
+                    f.write(chunk);h.update(chunk)
+            if total != record['bytes'] or h.hexdigest() != record['sha256']:
+                raise ValueError('Ubuntu source SHA256/size mismatch')
+            f.flush();os.fchmod(f.fileno(),0o644)
+            os.link(temporary,target)  # Never replace an existing file.
+        finally:
+            temporary.unlink(missing_ok=True)
+    return True
+
+
+def download(specs, directory, snapshot, only_source=False):
+    command = ['sh','/work/apt_retry.sh','source',*(['--only-source'] if only_source else []),
+               '--download-only',*specs]
+    try:
+        subprocess.run(command,cwd=directory,check=True,capture_output=True,text=True)
+        return []
+    except subprocess.CalledProcessError as error:
+        log = (error.stdout or '')+(error.stderr or '')
+        print(log,end='')
+        # Never turn auth, signature, checksum or unknown failures into fallback.
+        if ('503  Service Unavailable' not in log and '503 Service Unavailable' not in log) or any(
+            text in log.lower() for text in ('hash sum mismatch','signature','unauthorized','forbidden')):
+            raise
+    # apt reads the already authenticated, fixed-snapshot Sources indexes.
+    text = subprocess.check_output(['apt-get','--print-uris','source','--only-source','--download-only',*specs],
+                                   cwd=directory,text=True)
+    used = [r for r in archive_inputs(text,snapshot) if download_exact(r,directory)]
+    # Let apt revalidate the complete original source set; no package/version,
+    # index, checksum or source-offering rule has changed.
+    subprocess.run(command,cwd=directory,check=True)
+    return used

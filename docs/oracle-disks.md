@@ -78,6 +78,8 @@ Only uniquely named/labeled task containers are stopped/removed. The launcher de
 
 Failed runs retain a unique `<output>.partial-*` directory with `FAILED.txt`, logs and any loop journal; no success directory/record is produced. Keep that directory until owned-loop reconciliation succeeds. Diagnose `generator.log`, `conversion.log` and `loop.json`; do not delete backing scratch while it may still be attached. Never detach another task's device. Successful runs retain their partial-named working directory as local evidence (without `FAILED.txt`); only the four files in the success output directory are distribution assets. Remove only this task's retained scratch after confirming its journal and container cleanup.
 
+The existing Standard/probe corresponding-source collection retains its fixed Ubuntu snapshot. If snapshot source-file retrieval exhausts its retries with HTTP 503, `build/ubuntu_sources.py` obtains the expected file names, sizes and SHA256 values from apt's already authenticated snapshot Sources indexes. It may fetch only those exact bytes from the official `archive.ubuntu.com` pool, then reruns the original apt command to revalidate the complete source set. No package version or index changes; signature/hash/authentication errors and unavailable indexes fail closed. Used fallback URLs and hashes are recorded in Standard build metadata (`ubuntu_source_fallbacks`) or the probe's `ubuntu-source-fallbacks.json`, and all source files remain in the source offering.
+
 ### Download and release records
 
 The PR Test workflow generates ARM64 disks and uploads all four files as the downloadable `standard-oracle-arm64` artifact (14-day retention):
@@ -205,6 +207,12 @@ detach 前に backing の device/inode を再確認します。
 他の作業の device は detach しません。
 成功時も作業ディレクトリを証跡として残し、配布対象は成功出力内の 4 ファイルだけにします。
 所有 loop とコンテナの後処理を確認してから、今回の scratch だけを削除できます。
+
+既存 Standard/probe の対応ソース収集では、固定した Ubuntu snapshot を維持します。
+ソースファイルの取得が HTTP 503 で再試行を尽くした場合だけ、`build/ubuntu_sources.py` が apt の認証済み snapshot Sources 索引からファイル名、サイズ、SHA256 を取得します。
+公式 `archive.ubuntu.com` の pool から完全に一致する内容だけを取得し、元の apt コマンドでソース一式を再検証します。
+パッケージ版と索引は変更せず、署名、hash、認証のエラーや索引自体の取得失敗は停止します。
+使用した代替 URL と hash は、Standard の `ubuntu_source_fallbacks` または probe の `ubuntu-source-fallbacks.json` に記録し、対応ソースは従来どおり併配します。
 
 ### 取得方法とリリース記録
 

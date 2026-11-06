@@ -215,7 +215,8 @@ class ProbePackageTests(unittest.TestCase):
                     if args[0] != 'sh': return
                     self.assertEqual(args[:5], ['sh', '/work/apt_retry.sh', 'source', '--only-source', '--download-only'])
                     self.assertEqual(args[5:], expected)
-                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True})
+                    self.assertEqual(kwargs, {'cwd': root/'opt/validation-sources', 'check': True,
+                                              'capture_output': True, 'text': True})
                     (kwargs['cwd']/'audit.dsc').write_bytes(b'partial source')
                     if failure: raise subprocess.CalledProcessError(100, args)
                     (kwargs['cwd']/'example.dsc').write_bytes(b'remaining source')

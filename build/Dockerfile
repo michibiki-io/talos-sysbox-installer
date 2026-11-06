@@ -24,7 +24,7 @@ RUN SNAPSHOT="$APT_SNAPSHOT" && test -n "$SNAPSHOT" && \
 FROM dependencies AS assemble
 COPY --from=catalogue /image-digests /work/catalogue-image-digests
 COPY versions.lock.json /work/versions.lock.json
-COPY build/assemble.py build/official_sources.py build/proc_transfer.py /work/
+COPY build/assemble.py build/official_sources.py build/proc_transfer.py build/ubuntu_sources.py /work/
 COPY LICENSE /work/LICENSE
 COPY --from=supervisor /usr/local/go/LICENSE /work/GO-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /work/GO-PATENTS
@@ -56,7 +56,7 @@ COPY --from=assemble /out/rootfs/usr/local/share/licenses/talos-sysbox/ /opt/pro
 COPY --from=supervisor /usr/local/go/LICENSE /opt/validation-go-LICENSE
 COPY --from=supervisor /usr/local/go/PATENTS /opt/validation-go-PATENTS
 COPY versions.lock.json /work/versions.lock.json
-COPY build/validation_image.py build/validation_packages.py /work/
+COPY build/validation_image.py build/validation_packages.py build/ubuntu_sources.py /work/
 RUN python3 /work/validation_image.py && rm -rf /usr/local/go && \
     groupadd --gid 1001 probe && useradd --uid 1001 --gid 1001 --create-home probe && \
     mkdir -p /tmp/issue5-repo && cp -a /opt/proc-transfer/oracle/. /tmp/issue5-repo/ && chmod -R a+rX /tmp/issue5-repo && \
