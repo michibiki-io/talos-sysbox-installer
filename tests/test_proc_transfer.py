@@ -630,7 +630,7 @@ class OperatorContracts(unittest.TestCase):
             changed = copy.deepcopy(lock); changed['test_images']['proc_transfer_probe'][key] = value
             with self.assertRaises(ValueError): operator.render(changed, 'approved', 'owned', 'a'*32)
 
-    def test_node_namespace_gate_is_independent_and_fails_before_socket_query(self):
+    def test_runtime_namespace_gate_is_independent_and_fails_before_socket_query(self):
         launcher = self.module('namespace_launcher', 'build/runtime_launcher.py')
         with tempfile.TemporaryDirectory() as work:
             proc = Path(work)
@@ -638,24 +638,64 @@ class OperatorContracts(unittest.TestCase):
             for name, identity in (('pid', 'pid:[1]'), ('user', 'user:[2]')):
                 for who in ('1', 'self'): (proc / who / 'ns' / name).symlink_to(identity)
             mapping = proc / 'self/uid_map'; mapping.write_text('0 0 4294967295\n')
-            self.assertEqual(launcher.trusted_host_namespaces(proc), {'pid': 'pid:[1]', 'user': 'user:[2]'})
+            with mock.patch.object(launcher, 'verify_cri_peer') as peer:
+                self.assertEqual(launcher.trusted_runtime_namespaces(proc), {'pid': 'pid:[1]', 'user': 'user:[2]'})
+                peer.assert_called_once_with({'pid': 'pid:[1]', 'user': 'user:[2]'}, proc)
             for name in ('pid', 'user'):
                 link = proc / 'self/ns' / name; original = link.readlink()
                 link.unlink(); link.symlink_to(name + ':[9]')
-                with self.assertRaisesRegex(ValueError, 'independently observe'): launcher.trusted_host_namespaces(proc)
+                with self.assertRaisesRegex(ValueError, 'independently observe'): launcher.trusted_runtime_namespaces(proc)
                 link.unlink(); link.symlink_to(original)
             mapping.write_text('0 100000 65536\n')
-            with self.assertRaisesRegex(ValueError, 'initial User'): launcher.trusted_host_namespaces(proc)
+            with self.assertRaisesRegex(ValueError, 'initial User'): launcher.trusted_runtime_namespaces(proc)
         with mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
              mock.patch.object(launcher.os, 'geteuid', return_value=0), \
              mock.patch.object(launcher.os, 'uname') as uname, \
-             mock.patch.object(launcher, 'trusted_host_namespaces', side_effect=ValueError('untrusted')), \
+             mock.patch.object(launcher, 'trusted_runtime_namespaces', side_effect=ValueError('untrusted')), \
              mock.patch.object(launcher, 'task_pid') as task:
             uname.return_value.machine = 'x86_64'
             with self.assertRaisesRegex(ValueError, 'untrusted'): launcher.run(None)
             task.assert_not_called()
 
-    def test_system_socket_uses_verified_node_root_after_pair_checks(self):
+    def test_cri_peer_credentials_namespace_and_lifecycle_are_kernel_bound(self):
+        import struct
+        launcher = self.module('cri_peer_launcher', 'build/runtime_launcher.py')
+        expected = {'pid': 'pid:[10]', 'user': 'user:[1]'}
+        with tempfile.TemporaryDirectory() as work:
+            proc = Path(work)
+            (proc / '12/ns').mkdir(parents=True)
+            for name, value in expected.items():
+                (proc / '12/ns' / name).symlink_to(value)
+            with mock.patch.object(launcher.socket, 'socket') as socket_mock, \
+                 mock.patch.object(launcher.os, 'pidfd_open', return_value=99) as pin, \
+                 mock.patch.object(launcher.os, 'close') as close, \
+                 mock.patch.object(launcher.select, 'select', return_value=([], [], [])) as poll:
+                connection = socket_mock.return_value.__enter__.return_value
+                connection.getsockopt.return_value = struct.pack('3i', 12, 0, 0)
+                launcher.verify_cri_peer(expected, proc)
+                connection.connect.assert_called_with('/run/containerd/containerd.sock')
+                pin.assert_called_with(12)
+                close.assert_called_with(99)
+                for credentials in [(0, 0, 0), (12, 1001, 0), (12, 0, 1001)]:
+                    pin.reset_mock()
+                    connection.getsockopt.return_value = struct.pack('3i', *credentials)
+                    with self.assertRaisesRegex(ValueError, 'CRI peer'):
+                        launcher.verify_cri_peer(expected, proc)
+                    pin.assert_not_called()
+                connection.getsockopt.return_value = struct.pack('3i', 12, 0, 0)
+                for exited in [([99], [], []), ([], [], [])]:
+                    poll.side_effect = [exited, ([99], [], [])]
+                    with self.assertRaises(ValueError):
+                        launcher.verify_cri_peer(expected, proc)
+                    close.assert_called_with(99)
+                poll.side_effect = None
+                (proc / '12/ns/pid').unlink()
+                (proc / '12/ns/pid').symlink_to('pid:[999]')
+                with self.assertRaisesRegex(ValueError, 'namespace/lifecycle mismatch'):
+                    launcher.verify_cri_peer(expected, proc)
+                close.assert_called_with(99)
+
+    def test_cri_owned_backend_query_follows_pair_checks(self):
         from types import SimpleNamespace
         launcher = self.module('socket_launcher', 'build/runtime_launcher.py')
         sha = 'b'*64; revision = 'a'*40
@@ -686,7 +726,7 @@ class OperatorContracts(unittest.TestCase):
                      mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
                      mock.patch.object(launcher.os, 'geteuid', return_value=0), \
                      mock.patch.object(launcher.os, 'uname', return_value=SimpleNamespace(machine='x86_64')), \
-                     mock.patch.object(launcher, 'trusted_host_namespaces', return_value={'pid': 'pid:[1]', 'user': 'user:[2]'}), \
+                     mock.patch.object(launcher, 'trusted_runtime_namespaces', return_value={'pid': 'pid:[1]', 'user': 'user:[2]'}), \
                      mock.patch.object(launcher, 'verify_artifacts', return_value={'architecture': 'amd64', 'revision': revision, 'source_lock_sha256': sha}), \
                      mock.patch.object(launcher, 'digest', return_value=sha), \
                      mock.patch.object(launcher.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o100755)), \
@@ -698,7 +738,7 @@ class OperatorContracts(unittest.TestCase):
                         task.assert_not_called()
                     else:
                         with self.assertRaisesRegex(RuntimeError, 'socket reached'): launcher.run(args)
-                        task.assert_called_once_with('/proc/1/root/system/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
+                        task.assert_called_once_with('/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
 
     def test_fifo_is_private_same_inode_through_process_root_and_exit_is_preserved(self):
         import os

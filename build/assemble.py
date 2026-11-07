@@ -8,10 +8,9 @@ import re
 import shutil
 import subprocess
 import tarfile
-import urllib.request
 import zipfile
 from pathlib import Path
-from official_sources import collect, verify_catalogue, is_notice, stable_json
+from official_sources import collect, verify_catalogue, is_notice, stable_json, download as download_locked
 import proc_transfer
 import ubuntu_sources
 
@@ -29,11 +28,7 @@ def run(args):
 
 
 def download(spec, target):
-    data = urllib.request.urlopen(spec['url'], timeout=120).read()
-    if hashlib.sha256(data).hexdigest() != spec['sha256']:
-        raise RuntimeError('Upstream archive checksum mismatch')
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    download_locked(spec, target)
 
 
 def owner(path):
@@ -297,7 +292,10 @@ def main():
     shutil.copytree('/work/sysbox/usr/share/doc', LIC / 'sysbox-package', dirs_exist_ok=True)
     ctr_source=Path('/work/containerd-source')
     extract_source(SOURCES/'containerd.tar.gz',ctr_source)
-    subprocess.run(['go','build','-buildvcs=false','-trimpath','-tags','netgo osusergo','-ldflags','-buildid= -s -w -X github.com/containerd/containerd/v2/version.Version=v2.1.6','-o','/work/ctr','./cmd/ctr'],cwd=ctr_source,env=dict(os.environ,CGO_ENABLED='0',GOTOOLCHAIN='local',GOFLAGS='-mod=vendor -p=2'),check=True)
+    ctr_version = LOCK['sources']['containerd']['version']
+    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', ctr_version):
+        raise RuntimeError('invalid locked containerd version')
+    subprocess.run(['go','build','-buildvcs=false','-trimpath','-tags','netgo osusergo','-ldflags','-buildid= -s -w -X github.com/containerd/containerd/v2/version.Version='+ctr_version,'-o','/work/ctr','./cmd/ctr'],cwd=ctr_source,env=dict(os.environ,CGO_ENABLED='0',GOTOOLCHAIN='local',GOFLAGS='-mod=vendor -p=2'),check=True)
     ctr_build_info=run(['go','version','-m','/work/ctr'])
     if not re.search(r'\bCGO_ENABLED=0\b',ctr_build_info):
         raise RuntimeError('ctr has unaccounted C linkage; refusing redistribution')
@@ -337,7 +335,7 @@ def main():
                 raise RuntimeError('missing target xtables plugins')
             for path in plugins:
                 helper(path, root)
-        mounts = ''.join(f'    - source: {p}\n      destination: {p}\n      type: bind\n      options: [rbind, rshared, rw]\n' for p in ('/run', '/var', '/system/run'))
+        mounts = ''.join(f'    - source: {p}\n      destination: {p}\n      type: bind\n      options: [rbind, rshared, rw]\n' for p in ('/run', '/var'))
         # Socket readiness is checked inside the supervisor with a deadline;
         # a Talos path dependency would wait without that bound.
         config = f'''name: {daemon}

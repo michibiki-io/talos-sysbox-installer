@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "status": "PASS_LIMITED_SPIKE",
+  "purpose": "Feasibility research before formal implementation; NOT final-head or release validation",
+  "source_repository": "michibiki-io/talos-sysbox-installer",
+  "source_commit": "d516dac73acb80c5c327bdb1a8977168debe7cf9",
+  "source_branch": "main",
+  "tracked_source_changed": false,
+  "target": {
+    "architecture": "amd64",
+    "vcpus": 4,
+    "memory_gib": 8,
+    "talos": "1.14.5",
+    "kernel": "6.18.58-talos",
+    "containerd": "2.3.7",
+    "outer_kubernetes": "1.37.1",
+    "inner_kubernetes": "1.35.0",
+    "installer_variant": "Standard"
+  },
+  "input": {
+    "purpose": "SPIKE ONLY; not final build or support claim",
+    "original_extension": "ghcr.io/michibiki-io/talos-sysbox-extension@sha256:feb231b17033c1ec752d05bc80b2e4c00bb3f602f7f9b5455a2232f44e9b2847",
+    "modification": "manifest.yaml only: compatibility target changed from1.12.6 to1.14.5 for feasibility experiment; description labeled SPIKE; all Sysbox binaries unchanged",
+    "extension_local_oci_digest": "sha256:3fb9871848cc8171478df7e10703d402390e1345d8d12ef3d585d9547419f0db",
+    "profile": {
+      "baseProfileName": "installer",
+      "arch": "amd64",
+      "platform": "metal",
+      "version": "v1.14.5",
+      "input": {
+        "baseInstaller": {
+          "imageRef": "ghcr.io/siderolabs/installer-base:v1.14.5@sha256:e67128398bd33a640974f8cf6f8b68e4357bbf0cf92a4ee27e606b088b7c2b54"
+        },
+        "systemExtensions": [
+          {
+            "ociPath": "/input/extension-oci"
+          },
+          {
+            "imageRef": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:584e1d106e424d3e17ddd43bddf892b386748f10d11a9fd024a358f0d42c0a2e"
+          },
+          {
+            "imageRef": "ghcr.io/siderolabs/util-linux-tools:2.42.2@sha256:f93f23e96b28e00228cf9a006a15c1648bd5975be989adb1bee6c05c046001a1"
+          }
+        ]
+      }
+    }
+  },
+  "experiment": {
+    "purpose": "SPIKE ONLY",
+    "change": "Only supervisor backend socket moved from system containerd to CRI containerd; existing namespace/task allowlist unchanged; Sysbox binaries and helpers unchanged",
+    "supervisor_source_sha256": "8516013ecfd4d01b6afe4a88684ff58786f7677b221f24b062d6e003a07ea7c1",
+    "supervisor_binary_sha256": "aa7ef93f860a07c0d3564249e5530bbc87c89edd6d6bd217f657cdc8281af2b2",
+    "extension_oci_digest": "sha256:6a85d9a854a5b633a752e35c9ce83f8ad61fb4fb912d8b0f636457afbfdbb4f5",
+    "profile": {
+      "baseProfileName": "installer",
+      "arch": "amd64",
+      "platform": "metal",
+      "version": "v1.14.5",
+      "input": {
+        "baseInstaller": {
+          "imageRef": "ghcr.io/siderolabs/installer-base:v1.14.5@sha256:e67128398bd33a640974f8cf6f8b68e4357bbf0cf92a4ee27e606b088b7c2b54"
+        },
+        "systemExtensions": [
+          {
+            "ociPath": "/input/extension-cri-oci"
+          },
+          {
+            "imageRef": "ghcr.io/siderolabs/iscsi-tools:v0.2.0@sha256:584e1d106e424d3e17ddd43bddf892b386748f10d11a9fd024a358f0d42c0a2e"
+          },
+          {
+            "imageRef": "ghcr.io/siderolabs/util-linux-tools:2.42.2@sha256:f93f23e96b28e00228cf9a006a15c1648bd5975be989adb1bee6c05c046001a1"
+          }
+        ]
+      }
+    }
+  },
+  "configuration": {
+    "workloadIsolation": true,
+    "user.max_user_namespaces": 11255,
+    "runtime_handler": "sysbox-runc via CRICustomizationConfig/sysbox-spike",
+    "sysbox_sources_recompiled": false,
+    "supervisor_only_recompiled": true,
+    "supervisor_build_image": "docker.io/library/golang:1.26.2@sha256:7095ad02810845fa35d1fb090b8e57dd20dce4ca36b29b42951802350d2ec90e"
+  },
+  "observed_namespace_relationships": {
+    "before": "mgr/fs share initial host PID namespace; CRI has another PID namespace",
+    "after": "mgr/fs/CRI share CRI PID namespace, distinct from initial host PID namespace; all retain initial User namespace",
+    "cross_boot_inode_identity_assumed": false
+  },
+  "checks": {
+    "docker_ready": true,
+    "overlay2": true,
+    "cgroupfs_v2": true,
+    "privileged_child_mount": true,
+    "kind_ready": true,
+    "helm_rollout": true,
+    "service_dns_tcp": true,
+    "upstream_dns": true,
+    "ordinary_runtime_uidmap_security": true
+  },
+  "inner_network": {
+    "podSubnet": "10.200.0.0/16",
+    "serviceSubnet": "10.201.0.0/16"
+  },
+  "failures_and_corrections": [
+    "stock userns disabled: mgr startup ENOSPC",
+    "host backend context: Sysbox registration failed",
+    "default kind CIDRs: CoreDNS upstream loop; internal DNS also required explicit readiness wait"
+  ],
+  "cleanup": {
+    "kind_cluster_deleted": true,
+    "owned_kind_containers_remaining": 0,
+    "owned_namespace_deleted": true,
+    "owned_runtimeclass_deleted": true,
+    "node_retains": "SPIKE Talos1.14.5 installer with CRI-co-located Sysbox backends and explicit userns/sysbox-spike CRI config for subsequent work; not a release candidate",
+    "unrelated_resources_modified": false,
+    "sysboxfs_owned_mount_directories_remaining": 0,
+    "managed_host_containers_remaining": 0
+  },
+  "not_run": {
+    "formal_Talos_1_14_5_rebuild_and_final_head_validation": true,
+    "full_proc_sysfs_security_rejection_thread_lifecycle_suite": true,
+    "native_arm64_runtime": "UNRUN",
+    "oci": "NOT_RUN",
+    "Talos_1_14_5_Oracle_disk_generation": true,
+    "vmware_guest_agent_runtime": "UNRUN"
+  },
+  "raw_evidence_policy": "Credentials and raw VM logs remain private; no raw kubeconfig/MachineConfig/CA/key is included",
+  "evidence_sha256": {
+    "spike-inputs.json": "07cc3c386412f29e79c36b1b908f98a7b9fcfdc555d828dfdc3e5e4a819adeff",
+    "cri-experiment.json": "e03e11b557d0471443dfdbdfe303a78a141cd631ebb238ac9994793ad31d8258",
+    "unchanged-binaries.json": "8801ccaf013e4213cb38468e5a37a0c8116221e4adbf9868073980564682305c",
+    "namespaces-baseline.json": "2d59dfbe783d0a0372a5582b71c8fbc9df21c08747c0e004ab537fbf93a7c4e6",
+    "namespaces-cri.json": "17e2bd9f92f4b0203e06c0f18ffffbf9a0de6abb57447f9b404c38308e0ec74e",
+    "docker-result.json": "22b4d38ec49de9c5f92ecd90f955fd9311e372e60e486f940c4c2d377ea12003",
+    "kind.log": "10b4ce27f0ff6cbf9962b42ae20a11c280fea2be026f0035955979b918562dbf",
+    "kind-network.log": "b4eab230b90260940c6544a2af7ce6928c9c6f9065e49e00e0ea5a48ec06686a",
+    "coredns-previous.log": "cf1a46c7151822f921053150e544fa32f209e86b3ac5bf2e19e536142780b7ac",
+    "external-dns1.log": "b2c3798abcc66855498de24638aea853836686b95c9694997b6fb73a2a5be0fe",
+    "dns-retry1.log": "50f628226381a4c4963600e713b557d74f0d205de0db71101f169ca749992529",
+    "ordinary.log": "aebb4c95b6f01a57c40260fe2ef8329fabf2f1f7b7e5c72dc637c51a1044e6af",
+    "ordinary-cri.log": "276a280be616f505bbf9aadbf501271ab2d9603a3270a0d602f08f4ec49b65ca",
+    "cleanup-result.json": "725925f6159ae6630b450fda2902aed5ef2ba0c103f237f67d34f881cef21168"
+  },
+  "baseline_published_binary_and_supervisor_sha256": {
+    "proc-mount-helper": "aad580cb7080f67db017d5313e057f0f25d6ff3774d6ad8e6b15eaac382bcec6",
+    "sysbox-fs": "d9ca8a0ca6d3c7f8a6547025aa7041785e80279df4f3557e841026a07b96525c",
+    "sysbox-mgr": "aad852d1f6ace8bdc51233fc89791d160e95ef4e96c4172b44c268d106b0dbb7",
+    "sysbox-runc": "3aec08f6e64dcb79e24e28502ccbadfc63771d92e0bdf3d44c966714233a311d",
+    "sysfs-mount-helper": "adeac7d2ac71f662e3895b8d13149939cdbd265dad0ebe525c027d9f6b9232d9",
+    "sysbox-mgr/supervisor": "c01c975480476746d8bdc0a62ce91ee356d20f414cf0f4b46de4d1813c10c4eb",
+    "sysbox-fs/supervisor": "c01c975480476746d8bdc0a62ce91ee356d20f414cf0f4b46de4d1813c10c4eb"
+  }
+}

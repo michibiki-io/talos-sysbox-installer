@@ -34,7 +34,7 @@ class ArchitectureTests(unittest.TestCase):
         for arch, machine in [('amd64', 'x86_64'), ('arm64', 'aarch64')]:
             path, lock = build.select_lock(target=arch)
             self.assertEqual(lock['architecture'], arch)
-            self.assertEqual(lock['talos'], '1.12.6')
+            self.assertEqual(lock['talos'], '1.14.5')
             self.assertEqual(lock['sysbox'], '0.7.1')
             self.assertEqual(clients.host_lock(machine)['test_tools'], lock['test_tools'])
             self.assertIn('linux_' + arch, lock['sysbox_package']['url'])
@@ -136,7 +136,7 @@ class ArchitectureTests(unittest.TestCase):
                     with mock.patch.object(launcher.sys, 'version_info', (3, 12)), \
                          mock.patch.object(launcher.os, 'geteuid', return_value=0), \
                          mock.patch.object(launcher.os, 'uname', return_value=SimpleNamespace(machine=machine)), \
-                         mock.patch.object(launcher, 'trusted_host_namespaces', return_value={}), \
+                         mock.patch.object(launcher, 'trusted_runtime_namespaces', return_value={}), \
                          mock.patch.object(launcher, 'verify_artifacts', return_value={'architecture': artifact_arch}), \
                          mock.patch.object(launcher, 'digest', return_value='a'*64), \
                          mock.patch.object(launcher.subprocess, 'check_output') as commands:

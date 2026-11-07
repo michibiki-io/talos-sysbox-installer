@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a reviewed machine-file patch from an explicitly supplied fragment."""
+"""Generate fresh Talos 1.14 runtime configuration without replacing CRI parts."""
 import argparse
 import json
 import os
@@ -14,57 +14,47 @@ HANDLER = '''
   BinaryName = "/usr/local/bin/sysbox-runc"
   SystemdCgroup = false
 '''
+CUSTOMIZATION_NAME = 'sysbox'
 
 
-def merge(existing):
+def configuration(existing, max_user_namespaces=11255):
+    """Preflight the supplied CRI fragment; emit only our named addition.
+
+    The operator must also verify the named document and handler do not already
+    exist in other parts. This function never rewrites the supplied fragment.
+    """
     config = tomllib.loads(existing)
     runtimes = config.get('plugins', {}).get('io.containerd.cri.v1.runtime', {}).get('containerd', {}).get('runtimes', {})
     if 'sysbox-runc' in runtimes:
-        raise ValueError('sysbox-runc already exists; inspect and reconcile rather than overwrite')
-    merged = existing.rstrip()+'\n'+HANDLER
-    after = tomllib.loads(merged)
-    # Preserve the supplied fragment, including unrelated handler options.
-    added = after['plugins']['io.containerd.cri.v1.runtime']['containerd']['runtimes'].pop('sysbox-runc')
-    if added['options']['SystemdCgroup'] is not False:
-        raise ValueError('invalid handler')
-    for name, options in runtimes.items():
-        if after['plugins']['io.containerd.cri.v1.runtime']['containerd']['runtimes'][name] != options:
-            raise ValueError('existing handler changed')
-    return merged
+        raise ValueError('sysbox-runc already exists; reconcile existing CRI customizations before registration')
+    if type(max_user_namespaces) is not int or not 0 < max_user_namespaces < 2**31:
+        raise ValueError('max_user_namespaces must be a positive signed 32-bit integer')
+    return [
+        {'apiVersion': 'v1alpha1', 'kind': 'SysctlConfig',
+         'params': {'user.max_user_namespaces': str(max_user_namespaces)}},
+        {'apiVersion': 'v1alpha1', 'kind': 'CRICustomizationConfig',
+         'name': CUSTOMIZATION_NAME, 'content': HANDLER},
+    ]
 
 
-def machine_file_patch(existing, machine_files=None):
-    entry={'path':'/etc/cri/conf.d/20-customization.part','permissions':420,'op':'create','content':merge(existing)}
-    if machine_files is None:
-        return {'machine':{'files':[entry]}}
-    matches=[i for i,item in enumerate(machine_files) if item.get('path')==entry['path']]
-    if len(matches)!=1:
-        raise ValueError('expected exactly one existing customization entry')
-    replacement=dict(machine_files[matches[0]])
-    if replacement.get('content')!=existing:
-        raise ValueError('input fragment does not exactly match the existing customization entry; export and reconcile current content')
-    replacement.update(content=entry['content'],op='create')
-    # Talos rejects JSON6902 for multi-document configs. Its strategic delete
-    # selector removes just this path before the normal merge appends the
-    # replacement, within a single patch/apply operation. Other entries stay.
-    return {'version':'v1alpha1','machine':{'files':[{'path':entry['path'],'$patch':'delete'},replacement]}}
+def encode_documents(documents):
+    # JSON documents separated by YAML markers are accepted by Talos directly.
+    return '\n---\n'.join(json.dumps(document, indent=2) for document in documents)+'\n'
 
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('--input-fragment', required=True, type=Path)
-    p.add_argument('--output', required=True, type=Path)
-    state=p.add_mutually_exclusive_group(required=True)
-    state.add_argument('--no-existing-machine-file',action='store_true',help='operator has verified this path has no machine.files entry')
-    state.add_argument('--existing-machine-files',type=Path,help='private JSON array containing the current complete machine.files list')
-    a = p.parse_args()
-    files=json.loads(a.existing_machine_files.read_text()) if a.existing_machine_files else None
-    patch=machine_file_patch(a.input_fragment.read_text(),files)
-    # JSON is accepted as a Talos machineconfig patch; no YAML dependency.
-    fd=os.open(a.output,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
-    with os.fdopen(fd,'w') as output:
-        os.fchmod(output.fileno(),0o600)
-        output.write(json.dumps(patch,indent=2)+'\n')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--input-fragment', required=True, type=Path)
+    parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--max-user-namespaces', type=int, default=11255)
+    parser.add_argument('--no-existing-customization', action='store_true', required=True,
+                        help='operator verified no sysbox named document or sysbox-runc handler exists in any CRI part, including legacy machine.files')
+    args = parser.parse_args()
+    data = encode_documents(configuration(args.input_fragment.read_text(), args.max_user_namespaces))
+    fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as output:
+        output.write(data)
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()

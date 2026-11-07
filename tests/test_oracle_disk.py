@@ -81,7 +81,7 @@ class OracleInputsTests(unittest.TestCase):
                 mutate.assert_not_called()
                 self.assertEqual(list(Path(work).iterdir()),[])
 
-    def test_generator_failure_reconciles_only_named_owned_container_and_loop(self):
+    def test_rootless_generator_failure_reconciles_only_named_owned_container(self):
         lock,record,metadata = self.inputs()
         def export(ref,path,*args):
             with tarfile.open(path,'w') as tf:
@@ -94,7 +94,6 @@ class OracleInputsTests(unittest.TestCase):
                     commands.append(args)
                     if args[:2]==['docker','run'] and args[-1]=='generator':
                         stage = next(Path(args[i+1][:-5]) for i,x in enumerate(args) if x=='-v' and args[i+1].endswith(':/out'))
-                        (stage/'loop.json').write_text('{"loop":123,"after":"unbound"}')
                         if failure=='generation':raise RuntimeError('imager failed')
                     elif args[-2:]==['tools','/out']:
                         raise RuntimeError('conversion failed')
@@ -109,8 +108,13 @@ class OracleInputsTests(unittest.TestCase):
                 self.assertEqual(len(list(Path(work).glob('*.partial-*/FAILED.txt'))),1)
                 stop = [c for c in commands if c[:2]==['docker','stop'] and c[-1].endswith('-generator')]
                 self.assertEqual(len(stop),1);self.assertTrue(stop[0][-1].startswith('talos-oracle-'))
-                audit = [c for c in commands if c[-1]=='audit'];self.assertEqual(len(audit),1)
-                self.assertNotIn('--privileged',audit[0]);self.assertNotIn('/dev:/dev',str(commands))
+                self.assertFalse(any(c[-1]=='audit' for c in commands))
+                generator=next(c for c in commands if c[:2]==['docker','run'] and c[-1]=='generator')
+                self.assertIn('--user',generator)
+                self.assertNotIn('--cap-add',generator)
+                self.assertNotIn('--device-cgroup-rule',generator)
+                self.assertNotIn('--privileged',generator)
+                self.assertNotIn('/dev:/dev',str(commands))
                 self.assertFalse(any('-a' in c for c in commands))
 
 

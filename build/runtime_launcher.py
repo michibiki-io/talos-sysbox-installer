@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 """Trusted node-context verification of a dedicated, uniquely tagged probe only.
 
-Requires Python >=3.12, initial-user root, host PID/proc access, CAP_SYS_ADMIN,
-CAP_SYS_PTRACE, CAP_SETUID/GID, CAP_SYS_CHROOT and access to CRI/system containerd.
+Requires Python >=3.12, initial-user root, CRI PID/proc access, CAP_SYS_ADMIN,
+CAP_SYS_PTRACE, CAP_SETUID/GID, CAP_SYS_CHROOT and access to CRI containerd.
 No daemon changes, package installation or seccomp disabling. Raw subprocess
 output stays in a private local log; the result contains no target identifiers.
 """
@@ -13,12 +13,15 @@ import os
 from pathlib import Path
 import re
 import select
+import socket
+import struct
 import subprocess
 import sys
 import traceback
 import time
 
 BASE = Path('/opt/proc-transfer')
+CRI_SOCKET = '/run/containerd/containerd.sock'
 CONTRACT = 'proc-sysfs-transfer-v1-thread-pidfd'
 BUILD_PROFILE = 'proc-sysfs-fuse-v1'
 ELF_MACHINES = {'amd64': 62, 'arm64': 183}
@@ -125,15 +128,35 @@ def verify_backend(backend, metadata, host, proc_root=Path('/proc')):
     if os.readlink(proc_root / str(backend) / 'ns/user') != host['user']:
         raise ValueError('fs backend must use the trusted initial User namespace')
     if os.readlink(proc_root / str(backend) / 'ns/pid') != host['pid']:
-        raise ValueError('fs backend must join node PID namespace')
+        raise ValueError('fs backend must join the verified CRI PID namespace')
 
 
-def trusted_host_namespaces(proc_root=Path('/proc')):
+def verify_cri_peer(namespaces, proc_root=Path('/proc')):
+    """Bind the observed PID context to kernel credentials of the real CRI socket."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        connection.connect(CRI_SOCKET)
+        pid, uid, gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if pid <= 0 or uid != 0 or gid != 0:
+            raise ValueError('CRI peer must be visible initial-user root')
+        pin = os.pidfd_open(pid)
+        try:
+            if select.select([pin], [], [], 0)[0]:
+                raise ValueError('CRI peer exited')
+            observed = {name: os.readlink(proc_root / str(pid) / 'ns' / name) for name in namespaces}
+            if observed != namespaces or select.select([pin], [], [], 0)[0]:
+                raise ValueError('launcher and CRI peer namespace/lifecycle mismatch')
+        finally:
+            os.close(pin)
+
+
+def trusted_runtime_namespaces(proc_root=Path('/proc')):
     host = {name: os.readlink(proc_root / '1/ns' / name) for name in ('pid', 'user')}
     if any(os.readlink(proc_root / 'self/ns' / name) != host[name] for name in host):
-        raise ValueError('launcher must independently observe node PID and initial User namespaces')
+        raise ValueError('launcher must independently observe runtime PID and initial User namespaces')
     if (proc_root / 'self/uid_map').read_text().split() != ['0', '0', '4294967295']:
         raise ValueError('launcher requires the initial User namespace')
+    verify_cri_peer(host, proc_root)
     return host
 
 
@@ -141,7 +164,7 @@ def run(args):
     architecture = HOST_ARCHITECTURES.get(os.uname().machine)
     if sys.version_info < (3, 12) or os.geteuid() != 0 or architecture is None:
         raise ValueError('requires trusted amd64/arm64 root and Python >=3.12')
-    host = trusted_host_namespaces()
+    host = trusted_runtime_namespaces()
     artifacts = verify_artifacts(BASE)
     image_lock = json.loads(args.image_lock.read_text())
     if digest(BASE / 'artifacts.lock.json') != image_lock['validation_artifacts_lock_sha256']:
@@ -196,7 +219,7 @@ def run(args):
     for daemon in ('sysbox-mgr', 'sysbox-fs'):
         if digest(local / 'lib/containers' / daemon / 'supervisor') != metadata['supervisor_sha256']:
             raise ValueError('installed supervisor mismatch')
-    backend = task_pid('/proc/1/root/system/run/containerd/containerd.sock', 'talos-sysbox', 'sysbox-fs')
+    backend = task_pid(CRI_SOCKET, 'talos-sysbox', 'sysbox-fs')
     verify_backend(backend, metadata, host)
     outer = task_pid('/run/containerd/containerd.sock', 'k8s.io', args.container)
     pin = os.pidfd_open(outer)
@@ -219,6 +242,7 @@ def run(args):
         if probe_processes(args.container) != {outer}:
             raise ValueError('dedicated probe contains unexpected processes before verification')
         result = {'architecture': architecture, 'kernel': os.uname().release,
+                  'namespace_context': 'cri', 'production_metadata_sha256': digest(args.metadata),
                   'revision': artifacts['revision'], 'runtime_binary_sha256': metadata['proc_transfer']['output_sha256'],
                   'build_profile': BUILD_PROFILE, 'validation_image_oci_digest': probe_image['oci_digest'],
                   'unrun': {'failure_helper_injection': 'Requires separately approved disposable daemon; installed consumer is never reconfigured',

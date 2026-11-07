@@ -76,7 +76,7 @@ def profile(standard, layout):
 
 
 def budget(directory):
-    # 3 GiB preallocated imager scratch + bounded conversion/extraction copies;
+    # Small imager scratch + bounded conversion/extraction copies;
     # leave margin for unrelated work. This is not a 50 GiB raw allocation.
     if shutil.disk_usage(directory).free < 12*1024**3:
         raise RuntimeError('insufficient space: need at least 12 GiB free for Oracle generation')
@@ -89,14 +89,8 @@ def container_limits():
 
 
 def generator_permissions():
-    # Private /dev (Docker's normal device namespace), no host /dev bind.
-    # Linux loop devices use major 7; extended partitions use BLOCK_EXT_MAJOR
-    # 259. The latter also covers NVMe, so private node visibility and backing
-    # ownership checks remain necessary; no host /dev is exposed.
-    return ['--cap-drop','ALL','--cap-add','SYS_ADMIN','--cap-add','MKNOD','--cap-add','DAC_OVERRIDE',
-            '--cap-add','CHOWN','--cap-add','FOWNER','--security-opt','apparmor=unconfined',
-            '--device-cgroup-rule','c 10:237 rwm','--device-cgroup-rule','b 7:* rwm',
-            '--device-cgroup-rule','b 259:* rwm']
+    # Official rootless imager: no mount/mknod capability, device rules or host /dev.
+    return ['--cap-drop','ALL']
 
 
 def reconcile_container(name):
@@ -194,7 +188,7 @@ def generate(record, standard, lock, executor, arch, metadata, output, builder, 
         (stage/'request.json').write_text(json.dumps({'extension_names':extension_names})+'\n')
         name = nonce+'-generator'
         base = ['docker','run','--name',name,'--label','talos.oracle.task='+nonce,*container_limits(),
-                *generator_permissions(),'--tmpfs','/tmp:rw,nosuid,nodev,size=2g',
+                '--user',f'{os.getuid()}:{os.getgid()}',*generator_permissions(),'--tmpfs','/tmp:rw,nosuid,nodev,size=2g',
                 '-v',str(stage)+':/out']
         if layout:
             base += ['-v',str(local)+':/input:ro']
@@ -202,12 +196,8 @@ def generate(record, standard, lock, executor, arch, metadata, output, builder, 
             with (stage/'generator.log').open('wb') as log:
                 call([*base,'-i',images['generator']],input=json.dumps(request).encode(),stdout=log,stderr=subprocess.STDOUT)
         finally:
-            # Remove only our named container. Reconciliation runs after it is
-            # stopped, while scratch still exists, including after hard kill.
+            # Remove only our named container; no host loop/device state is used.
             reconcile_container(name)
-            if (stage/'loop.json').exists():
-                call(['docker','run','--rm','--network','none',*container_limits(),*generator_permissions(),
-                      '-v',str(stage)+':/out',images['generator'],'audit'])
         budget(stage)
         try:
             with (stage/'conversion.log').open('wb') as log:
@@ -232,7 +222,8 @@ def generate(record, standard, lock, executor, arch, metadata, output, builder, 
                   'profile':request,'profile_sha256':file_sha256(stage/'profile.yaml'),'generation_sha256':recipe,
                   'build_metadata_sha256':file_sha256(stage/'build-metadata.json'),
                   'isolation':{'cpus':2,'memory_bytes':4*1024**3,'pids':256,'tmpfs_bytes':2*1024**3,
-                               'host_dev_bind':False,'loop':json.loads((stage/'loop.json').read_text()),
+                               'host_dev_bind':False,'generator_uid':os.getuid(),'generator_capabilities':[],
+                               'loop':{'status':'NOT_USED','reason':'official rootless Talos imager'},
                                'container_removed':True,'scratch_initial_request_bytes':2*1024**3}, **inspection}
         meta = stage/(PREFIX+'.inputs.json'); meta.write_text(json.dumps(result,indent=2)+'\n')
         checksum = stage/(PREFIX+'.sha256')
